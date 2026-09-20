@@ -1,0 +1,9 @@
+# Local settings and generated Python files must not be committed.
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+*.egg-info/

@@ -1,0 +1,1 @@
+"""Feature catalogue management module."""

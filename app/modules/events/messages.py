@@ -1,0 +1,10 @@
+class EventMessage:
+    CREATED = "Event created."
+    UPDATED = "Event updated."
+    DELETED = "Event deleted."
+    RSVP_UPDATED = "RSVP updated."
+    RSVP_CLEARED = "RSVP cleared."
+    COMMENT_ADDED = "Comment added."
+    LIKE_UPDATED = "Event like updated."
+    NOT_FOUND = "Event not found."
+    FORBIDDEN = "You do not have access to this event."

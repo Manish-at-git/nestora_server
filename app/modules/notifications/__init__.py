@@ -1,0 +1,1 @@
+"""Account notification inbox domain."""

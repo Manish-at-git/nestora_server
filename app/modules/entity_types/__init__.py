@@ -1,0 +1,1 @@
+"""Entity type management module."""
