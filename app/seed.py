@@ -25,6 +25,8 @@ from app.modules.committees.models import BoardCommitteeChatMessage, Committee, 
 from app.modules.financials.models import FinancialReport
 from app.modules.documents.models import Document, UnitDocument
 from app.modules.chart_of_accounts.models import GlobalChartOfAccount, AssociationChartOfAccount
+from app.modules.entities.models import Entity
+from app.modules.employees.models import Employee
 from app.modules.marketplace.models import MarketplaceCategory
 from app.modules.visitor_management.models import Delivery, PreApprovedVisitor, Visitor, VisitorLog, VisitorVisit
 from app.modules.wallet.models import Wallet, WalletTransaction
@@ -35,7 +37,6 @@ from app.modules.service_requests.models import ServiceRequest
 from app.modules.subscriptions.models import SubscriptionPlan
 from app.modules.users.models import UserCode, UserDetail
 from app.modules.vendors.models import Vendor
-
 
 # These are development bootstrap defaults. Production deployments should
 # override them with unique INITIAL_ADMIN_* values before the first seed run.
@@ -48,6 +49,17 @@ WELCOME_NOTIFICATION_ID = "5d8fd65f-25e1-4d57-932b-696b5db13e7d"
 async def _seed_roles(session: AsyncSession, rows: list[dict]) -> None:
     """Insert copied roles using their original IDs and reject incompatible existing records."""
     for row in rows:
+        entity_id = row.get("entity_id")
+        if entity_id and await session.get(Entity, entity_id) is None:
+            if bool(row.get("is_deleted", False)):
+                # Historical deleted roles can reference entities that were
+                # removed before the IAM snapshot was captured.
+                continue
+            raise RuntimeError(
+                f"Role '{row['code']}' references missing entity ID {entity_id}; "
+                "seed that entity before seeding roles."
+            )
+
         role = await session.get(Role, row["id"])
         if role is not None:
             if role.code != row["code"]:
