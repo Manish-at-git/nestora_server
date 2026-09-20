@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_codes import generate_access_code
 from app.core.config import Settings
 from app.core.constants import RoleCode
 from app.core.dependencies import AuthContext, get_app_settings, get_auth_context, require_csrf, require_role
@@ -151,7 +152,7 @@ async def approve_code_request(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Request already processed.")
     async with UnitOfWork(session):
         for _ in range(10):
-            code_value = f"NST-{uuid.uuid4().hex[:6].upper()}"
+            code_value = generate_access_code()
             if await session.scalar(select(UserCode.id).where(UserCode.login_code == code_value)) is None:
                 break
         code = UserCode(id=str(uuid.uuid4()), login_code=code_value, status="active")

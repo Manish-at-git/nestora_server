@@ -129,6 +129,7 @@ class MeetingService:
     async def update_details(self, meeting_id: str, payload: MeetingDetailsRequest, account: Account) -> None:
         await self._require_editor(account)
         meeting = await self._get_meeting(meeting_id)
+        self._check_meeting_schedule_window(meeting.meeting_date, meeting.meeting_time)
         self._check_edit_window(meeting.created_at)
         if payload.target_block_id and not await self.repository.block_belongs_to_association(payload.target_block_id, meeting.association_id):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Target block does not belong to the association.")
@@ -228,6 +229,15 @@ class MeetingService:
     def _check_edit_window(created_at: datetime) -> None:
         if (datetime.now(created_at.tzinfo) - created_at).total_seconds() > 2 * 60 * 60:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Edit time limit (2 hours) has expired.")
+
+    @staticmethod
+    def _check_meeting_schedule_window(meeting_date, meeting_time: time) -> None:
+        meeting_datetime = datetime.combine(meeting_date, meeting_time)
+        if meeting_datetime - datetime.now() < timedelta(hours=24):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Meetings cannot be edited within 24 hours of their scheduled time.",
+            )
 
     @staticmethod
     def _generated_link() -> str:

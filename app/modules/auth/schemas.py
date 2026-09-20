@@ -4,6 +4,7 @@ import re
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.core.access_codes import normalize_access_code
 from app.core.constants import RoleCode
 
 
@@ -36,12 +37,12 @@ class LoginRequest(BaseModel):
 
 
 class ValidateCodeRequest(BaseModel):
-    code: str = Field(min_length=4, max_length=20)
+    code: str = Field(min_length=8, max_length=8)
 
     @field_validator("code")
     @classmethod
     def normalize_code(cls, value: str) -> str:
-        return value.strip().upper()
+        return normalize_access_code(value)
 
 
 class ValidateCodeResponse(BaseModel):
@@ -64,23 +65,28 @@ class CreateMemberAccountRequest(PasswordRequest):
     # The public onboarding form documents an 8-character minimum. Keep the
     # stronger character-class validation inherited from PasswordRequest.
     password: str = Field(min_length=8, max_length=256)
-    code: str = Field(min_length=4, max_length=20)
+    code: str = Field(min_length=8, max_length=8)
     email: EmailStr
     confirm_password: str
 
     @field_validator("code")
     @classmethod
     def normalize_code(cls, value: str) -> str:
-        return value.strip().upper()
+        return normalize_access_code(value)
 
 
 class UpdateDetailsRequest(BaseModel):
-    code: str = Field(min_length=4, max_length=20)
+    code: str = Field(min_length=8, max_length=8)
     requested_name: str | None = None
     requested_address: str | None = None
     requested_email: EmailStr | None = None
     requested_contact: str | None = None
     note: str | None = None
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return normalize_access_code(value)
 
     @field_validator("requested_email", mode="before")
     @classmethod

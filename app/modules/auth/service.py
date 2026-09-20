@@ -33,6 +33,7 @@ from app.modules.auth.schemas import (
 from app.modules.employees.models import Employee
 from app.modules.users.models import UserCode, UserDetail
 from app.modules.iam.models import Role
+from app.modules.wallet.models import Wallet
 
 
 @dataclass
@@ -87,7 +88,7 @@ class AuthService:
 
     async def validate_access_code(self, code: str) -> dict:
         """Validate an onboarding code without consuming it."""
-        if not re.fullmatch(r"[A-Z0-9\-!@#$%^&*]{4,20}", code):
+        if not re.fullmatch(r"[A-Z0-9]{8}", code):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid code format.")
         record = await self.repository.session.scalar(select(UserCode).where(UserCode.login_code == code))
         if record is None:
@@ -102,7 +103,10 @@ class AuthService:
             if expiry < now:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "This code has expired.")
         linked = await self.repository.session.scalar(
-            select(Account.id).join(UserDetail, UserDetail.user_id == Account.user_id).where(UserDetail.code_id == record.id)
+            select(Account.id).join(UserDetail, UserDetail.user_id == Account.user_id).where(
+                UserDetail.code_id == record.id,
+                Account.status == AccountStatus.ACTIVE,
+            )
         )
         return {"valid": True, "code_id": record.id, "already_registered": linked is not None}
 
@@ -188,8 +192,15 @@ class AuthService:
         )
         if detail is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "No member details linked to this code.")
-        if await self.repository.get_account_by_email(str(payload.email).lower()):
+        email = str(payload.email).lower()
+        account = await self.repository.session.scalar(
+            select(Account).where(Account.user_id == detail.user_id)
+        )
+        email_account = await self.repository.get_account_by_email(email)
+        if email_account is not None and (account is None or email_account.id != account.id):
             raise HTTPException(status.HTTP_409_CONFLICT, "An account already exists for this email.")
+        if account is not None and account.status == AccountStatus.ACTIVE:
+            raise HTTPException(status.HTTP_409_CONFLICT, "An account already exists for this member.")
         role = await self.repository.session.scalar(
             select(Role).where(Role.id == detail.role_id, Role.is_active.is_(True), Role.is_deleted.is_(False))
         ) if detail.role_id else None
@@ -197,18 +208,44 @@ class AuthService:
             role = await self.repository.get_role_by_code(RoleCode.HOMEOWNER)
         if role is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Homeowner role is not configured.")
-        account = Account(
-            email=str(payload.email).lower(),
-            password_hash=hash_password(payload.password),
-            role_id=role.id,
-            role=role,
-            user_id=detail.user_id,
-            status=AccountStatus.ACTIVE,
-            password_changed_at=utc_now(),
-        )
-        self.repository.add_account(account)
+        if account is None:
+            account = Account(
+                email=email,
+                password_hash=hash_password(payload.password),
+                role_id=role.id,
+                role=role,
+                user_id=detail.user_id,
+                status=AccountStatus.ACTIVE,
+                password_changed_at=utc_now(),
+            )
+            self.repository.add_account(account)
+        else:
+            current_role = await self.repository.session.scalar(
+                select(Role).where(Role.id == account.role_id)
+            )
+            account.email = email
+            account.password_hash = hash_password(payload.password)
+            account.status = AccountStatus.ACTIVE
+            account.password_changed_at = utc_now()
+            if current_role and current_role.code == RoleCode.BOARD_MEMBER.value:
+                account.role = current_role
+            else:
+                account.role_id = role.id
+                account.role = role
         code.status = "used"
         await self.repository.session.flush()
+        existing_wallet = await self.repository.session.scalar(
+            select(Wallet).where(Wallet.account_id == account.id)
+        )
+        if existing_wallet is None:
+            self.repository.session.add(
+                Wallet(
+                    account_id=account.id,
+                    balance=0,
+                    reward_points=0,
+                    is_deleted=False,
+                )
+            )
         session_token = generate_secret()
         csrf_token = generate_secret()
         self.repository.add_session(AuthSession(
@@ -281,6 +318,14 @@ class AuthService:
         )
         self.repository.add_account(account)
         await self.repository.session.flush()
+        self.repository.session.add(
+            Wallet(
+                account_id=account.id,
+                balance=0,
+                reward_points=0,
+                is_deleted=False,
+            )
+        )
         return await self.to_account_response(account)
 
     async def request_password_reset(self, email: str) -> PasswordResetDelivery | None:
@@ -336,6 +381,7 @@ class AuthService:
         now = utc_now()
         account.password_hash = hash_password(new_password)
         account.password_changed_at = now
+        await self._clear_employee_temporary_password(account)
         challenge.consumed_at = now
         await self.repository.consume_active_reset_challenges_for_account(account.id, now)
         await self.repository.revoke_all_sessions_for_account(account.id, now)
@@ -355,11 +401,20 @@ class AuthService:
             return False
         challenge.account.password_hash = hash_password(new_password)
         challenge.account.password_changed_at = now
+        await self._clear_employee_temporary_password(challenge.account)
         challenge.consumed_at = now
         await self.repository.consume_active_reset_challenges_for_account(challenge.account_id, now)
         await self.repository.revoke_all_sessions_for_account(challenge.account_id, now)
         await self.repository.session.flush()
         return True
+
+    async def _clear_employee_temporary_password(self, account: Account) -> None:
+        """Remove the onboarding credential once an employee chooses a password."""
+        if not account.employee_id:
+            return
+        employee = await self.repository.session.get(Employee, account.employee_id)
+        if employee is not None:
+            employee.temp_password = None
 
     async def to_account_response(self, account: Account) -> AccountResponse:
         """Translate an account and its database permission matrix into the client API shape."""

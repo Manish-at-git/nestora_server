@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_codes import generate_access_code
 from app.modules.associations.models import Association
 from app.modules.auth.models import Account
 from app.modules.iam.models import Role
@@ -49,7 +50,7 @@ class UserRepository:
 
     async def create_code(self) -> UserCode:
         for _ in range(10):
-            candidate = f"NST-{uuid.uuid4().hex[:6].upper()}"
+            candidate = generate_access_code()
             if await self.session.scalar(select(UserCode.id).where(UserCode.login_code == candidate)) is None:
                 code = UserCode(id=str(uuid.uuid4()), login_code=candidate, status="active")
                 self.session.add(code)

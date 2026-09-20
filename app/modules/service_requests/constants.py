@@ -22,12 +22,13 @@ ASSOCIATION_VIEW_ROLE_CODES = frozenset(
         RoleCode.COMMITTEE_MEMBER,
     }
 )
-STATUS_MANAGER_ROLE_CODES = frozenset(
+RESIDENT_ONLY_ROLE_CODES = frozenset(
     {
-        RoleCode.SUPER_ADMIN,
-        RoleCode.ADMIN,
-        RoleCode.SECURITY,
+        RoleCode.HOMEOWNER,
         RoleCode.BOARD_MEMBER,
         RoleCode.COMMITTEE_MEMBER,
     }
+)
+STATUS_MANAGER_ROLE_CODES = frozenset(
+    {RoleCode.SUPER_ADMIN, RoleCode.ADMIN}
 )

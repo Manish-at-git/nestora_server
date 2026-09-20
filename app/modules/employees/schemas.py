@@ -69,6 +69,7 @@ class EmployeeResponse(BaseModel):
     emergency_contact_name: str | None = None
     emergency_contact_number: str | None = None
     id_proof_url: str | None = None
+    temp_password: str | None = None
     associations: list[EmployeeAssociationResponse] = Field(default_factory=list)
     created_at: datetime | None = None
 

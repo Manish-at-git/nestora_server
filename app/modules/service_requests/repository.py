@@ -50,7 +50,41 @@ class ServiceRequestRepository:
         identifiers = [account_id]
         if user_id:
             identifiers.append(user_id)
-        return await self._list("sr.user_id IN :identifiers", {"identifiers": tuple(identifiers)})
+        resident_context = await self.resident_unit_context(account_id, user_id)
+        predicate = "sr.user_id IN :identifiers"
+        parameters: dict = {"identifiers": tuple(dict.fromkeys(identifiers))}
+        if resident_context and resident_context.get("unit_id"):
+            predicate = (
+                f"({predicate} OR (sr.unit_id = :unit_id "
+                "AND sr.association_id = :association_id))"
+            )
+            parameters.update(
+                {
+                    "unit_id": resident_context["unit_id"],
+                    "association_id": resident_context.get("association_id"),
+                }
+            )
+        return await self._list(predicate, parameters)
+
+    async def resident_unit_context(
+        self, account_id: str, user_id: str | None
+    ) -> dict | None:
+        identifiers = [account_id]
+        if user_id:
+            identifiers.append(user_id)
+        result = await self.session.execute(
+            text(
+                "SELECT ud.unit_id, COALESCE(ud.association_id, b.association_id) AS association_id "
+                "FROM user_details ud "
+                "LEFT JOIN units u ON ud.unit_id = u.id "
+                "LEFT JOIN blocks b ON u.block_id = b.id "
+                "WHERE ud.user_id IN :identifiers AND ud.is_deleted = 0 "
+                "AND ud.unit_id IS NOT NULL LIMIT 1"
+            ).bindparams(bindparam("identifiers", expanding=True)),
+            {"identifiers": tuple(dict.fromkeys(identifiers))},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
 
     async def list_for_associations(
         self,
@@ -251,6 +285,25 @@ class ServiceRequestRepository:
         if resident and resident.get("account_id"):
             participant_ids.add(resident["account_id"])
 
+        if request.unit_id and request.association_id:
+            unit_residents = await self.session.scalars(
+                text(
+                    "SELECT DISTINCT ac.account_id FROM accounts ac "
+                    "JOIN user_details ud ON ud.user_id = ac.user_id "
+                    "WHERE ac.status = :account_status AND ud.unit_id = :unit_id "
+                    "AND COALESCE(ud.association_id, "
+                    "(SELECT b.association_id FROM units u JOIN blocks b ON u.block_id = b.id "
+                    "WHERE u.id = ud.unit_id LIMIT 1)) = :association_id "
+                    "AND ud.is_deleted = 0"
+                ),
+                {
+                    "account_status": AccountStatus.ACTIVE,
+                    "unit_id": request.unit_id,
+                    "association_id": request.association_id,
+                },
+            )
+            participant_ids.update(unit_residents.all())
+
         if request.association_id:
             admin_result = await self.session.scalars(
                 text(
@@ -302,7 +355,13 @@ class ServiceRequestRepository:
     def add_message(self, message: ServiceRequestThreadMessage) -> None:
         self.session.add(message)
 
-    async def add_notification(self, account_id: str | None, title: str, message: str) -> None:
+    async def add_notification(
+        self,
+        account_id: str | None,
+        title: str,
+        message: str,
+        request_id: str | None = None,
+    ) -> None:
         if not account_id:
             return
         await create_notification(
@@ -312,7 +371,8 @@ class ServiceRequestRepository:
             message,
             notification_type="service_request",
             entity_type="service_request",
-            action_url="/service-requests",
+            entity_id=request_id,
+            action_url=f"/service-requests/{request_id}" if request_id else "/service-requests",
         )
 
     async def notify_association_admins(
@@ -320,6 +380,7 @@ class ServiceRequestRepository:
         association_id: str,
         title: str,
         message: str,
+        request_id: str | None = None,
     ) -> None:
         result = await self.session.scalars(
             text("SELECT admin_id FROM admin_associations WHERE association_id = :id"),
@@ -331,5 +392,7 @@ class ServiceRequestRepository:
             title,
             message,
             notification_type="service_request",
-            action_url="/service-requests",
+            entity_type="service_request",
+            entity_id=request_id,
+            action_url=f"/service-requests/{request_id}" if request_id else "/service-requests",
         )

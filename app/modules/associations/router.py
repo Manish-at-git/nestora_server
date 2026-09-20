@@ -70,11 +70,10 @@ async def download_excel_template() -> StreamingResponse:
             "Tenant Email Id",
             "Tenant Contact Number",
         ],
-        "Board & Committee Members": [
+        "Board Members": [
             "Block Name",
             "Unit Number",
             "Role",
-            "Committee Name",
         ],
     }
 
@@ -93,6 +92,21 @@ async def download_excel_template() -> StreamingResponse:
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=onboarding_template.xlsx"},
+    )
+
+
+@router.post(
+    "/onboard/preview",
+    dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN))],
+)
+async def preview_onboarding_workbook(
+    csv_file: UploadFile = File(...),
+    _: object = Depends(require_csrf),
+) -> dict:
+    workbook_bytes = await csv_file.read()
+    return success_response(
+        AssociationService.workbook_metrics(workbook_bytes),
+        "Onboarding workbook analyzed successfully",
     )
 
 

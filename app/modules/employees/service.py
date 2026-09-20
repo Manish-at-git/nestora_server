@@ -1,12 +1,11 @@
 """Employee onboarding, updates, and safe temporary-password handling."""
 
-import secrets
-import string
 import uuid
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_codes import generate_access_code
 from app.core.security import hash_password
 from app.modules.auth.models import Account
 from app.modules.employees.messages import EmployeeMessage
@@ -15,9 +14,9 @@ from app.modules.employees.repository import EmployeeRepository
 from app.modules.employees.schemas import EmployeeCreateRequest, EmployeeUpdateRequest
 
 
-def generate_temporary_password(length: int = 12) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+def generate_temporary_password() -> str:
+    """Generate the eight-character credential shown after employee onboarding."""
+    return generate_access_code()
 
 
 class EmployeeService:
@@ -66,6 +65,7 @@ class EmployeeService:
             emergency_contact_name=payload.emergency_contact_name,
             emergency_contact_number=payload.emergency_contact_number,
             id_proof_url=payload.id_proof_url,
+            temp_password=temporary_password,
             onboard_date=payload.onboard_date,
             end_date=payload.end_date,
             is_deleted=False,

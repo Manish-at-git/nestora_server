@@ -1,16 +1,17 @@
 """Association directory, onboarding, and subscription business rules."""
 
-import secrets
-import string
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from openpyxl import load_workbook
 from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import RoleCode
+from app.core.access_codes import generate_access_code
+from app.core.constants import AccountStatus, RoleCode
+from app.core.security import generate_secret, hash_password
+from app.modules.auth.models import Account
 from app.modules.entities.models import Entity
 from app.modules.iam.models import Role
 from app.modules.associations.messages import AssociationMessage
@@ -28,6 +29,48 @@ from app.modules.users.models import UserCode, UserDetail
 class AssociationService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = AssociationRepository(session)
+
+    @staticmethod
+    def workbook_metrics(workbook_bytes: bytes) -> dict[str, int]:
+        """Calculate editable onboarding defaults from the Unit Details sheet."""
+        try:
+            workbook = load_workbook(
+                filename=__import__("io").BytesIO(workbook_bytes),
+                read_only=True,
+                data_only=True,
+            )
+        except Exception as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, AssociationMessage.INVALID_WORKBOOK) from exc
+
+        required = {"Association Details", "Unit Details", "Homeowner Details"}
+        if not required.issubset(workbook.sheetnames):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, AssociationMessage.WORKBOOK_SHEETS_REQUIRED)
+
+        values = list(workbook["Unit Details"].values)
+        if not values:
+            return {"num_blocks": 0, "floors_per_block": 0, "units_per_floor": 0}
+        headers = [str(value).strip() if value is not None else "" for value in values[0]]
+
+        def clean(value: object) -> str:
+            return "" if value is None else str(value).strip()
+
+        floors_by_block: dict[str, set[str]] = {}
+        units_by_floor: dict[tuple[str, str], set[str]] = {}
+        for row_values in values[1:]:
+            if not any(value is not None for value in row_values):
+                continue
+            row = dict(zip(headers, row_values))
+            block, floor, unit = clean(row.get("Block Name")), clean(row.get("Floor")), clean(row.get("Unit Number"))
+            if not block or not unit:
+                continue
+            floors_by_block.setdefault(block, set()).add(floor)
+            units_by_floor.setdefault((block, floor), set()).add(unit)
+
+        return {
+            "num_blocks": len(floors_by_block),
+            "floors_per_block": max((len(floors) for floors in floors_by_block.values()), default=0),
+            "units_per_floor": max((len(units) for units in units_by_floor.values()), default=0),
+        }
 
     async def list(self, account_id: str, role_code: str):
         associations = await self.repository.list(account_id, role_code)
@@ -170,10 +213,6 @@ class AssociationService:
         self.repository.session.add(association)
         await self.repository.session.flush()
 
-        def code() -> str:
-            alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-            return "".join(secrets.choice(alphabet) for _ in range(8))
-
         role_rows = await self.repository.session.scalars(
             select(Role).where(Role.code.in_([RoleCode.HOMEOWNER, RoleCode.TENANT]), Role.is_deleted.is_(False))
         )
@@ -214,7 +253,7 @@ class AssociationService:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{AssociationMessage.INVALID_UNIT_REFERENCE}: {block_name}/{unit_number}")
             first_name, last_name = clean(row.get("First Name")), clean(row.get("Last Name"))
             address = f"{block_name}-{unit_number}, {association.address_line_1 or ''}".strip(", ")
-            login_code = UserCode(id=str(uuid.uuid4()), login_code=code(), status="active")
+            login_code = UserCode(id=str(uuid.uuid4()), login_code=generate_access_code(), status="active")
             self.repository.session.add(login_code)
             homeowner = UserDetail(
                 user_id=str(uuid.uuid4()), code_id=login_code.id, name=f"{first_name} {last_name}".strip(),
@@ -231,7 +270,7 @@ class AssociationService:
                 )
                 tenant_email = clean(row.get("Tenant Email Id"))
                 if tenant_email:
-                    tenant_code = UserCode(id=str(uuid.uuid4()), login_code=code(), status="active")
+                    tenant_code = UserCode(id=str(uuid.uuid4()), login_code=generate_access_code(), status="active")
                     self.repository.session.add(tenant_code)
                     self.repository.session.add(UserDetail(
                         user_id=str(uuid.uuid4()), code_id=tenant_code.id,
@@ -243,41 +282,71 @@ class AssociationService:
                     ))
                     tenant_count += 1
 
-        # The committee_members foreign key points to user_details. Flush the
-        # ORM-created homeowners/tenants before inserting those rows with SQL.
+        # Flush the ORM-created homeowners/tenants before inserting memberships.
         await self.repository.session.flush()
 
-        committees_created = 0
-        committee_ids: dict[str, str] = {}
-        if "Board & Committee Members" in workbook.sheetnames:
-            for row in rows("Board & Committee Members"):
-                committee_name = clean(row.get("Committee Name"))
-                if not committee_name:
-                    continue
-                committee_id = committee_ids.get(committee_name)
-                if committee_id is None:
-                    committee_id = str(uuid.uuid4())
-                    committee_ids[committee_name] = committee_id
-                    await self.repository.session.execute(
-                        text(
-                            "INSERT INTO committees (id, association_id, name, is_deleted) "
-                            "VALUES (:id, :association_id, :name, 0)"
-                        ),
-                        {"id": committee_id, "association_id": association_id, "name": committee_name},
+        if "Board Members" in workbook.sheetnames:
+            board_member_rows = rows("Board Members")
+        elif "Board & Committee Members" in workbook.sheetnames:
+            # Backward-compatible title support; Committee Name is ignored.
+            board_member_rows = rows("Board & Committee Members")
+        else:
+            board_member_rows = []
+
+        board_role_id = await self.repository.session.scalar(
+            select(Role.id).where(Role.code == RoleCode.BOARD_MEMBER, Role.is_deleted.is_(False))
+        )
+        board_members_created = 0
+        term_start = date.today()
+        term_end = term_start + timedelta(days=365)
+        for row in board_member_rows:
+            unit_id = unit_map.get((clean(row.get("Block Name")), clean(row.get("Unit Number"))))
+            user_id = homeowner_units.get(unit_id) if unit_id else None
+            account = await self.repository.session.scalar(
+                select(Account).where(Account.user_id == user_id)
+            ) if user_id else None
+            if user_id and account is None and board_role_id:
+                homeowner = await self.repository.session.scalar(
+                    select(UserDetail).where(UserDetail.user_id == user_id)
+                )
+                if homeowner is not None:
+                    # Board membership is assigned during onboarding, before the
+                    # resident has completed account setup with their access code.
+                    # The inactive account preserves the existing account-based
+                    # board-member contract and is activated during registration.
+                    account = Account(
+                        id=str(uuid.uuid4()),
+                        user_id=user_id,
+                        email=homeowner.email.lower(),
+                        password_hash=hash_password(generate_secret()),
+                        role_id=board_role_id,
+                        status=AccountStatus.INACTIVE,
                     )
-                    committees_created += 1
-                unit_id = unit_map.get((clean(row.get("Block Name")), clean(row.get("Unit Number"))))
-                user_id = homeowner_units.get(unit_id) if unit_id else None
-                if user_id:
-                    await self.repository.session.execute(
-                        text(
-                            "INSERT INTO committee_members (id, committee_id, user_id, role, is_deleted) "
-                            "VALUES (:id, :committee_id, :user_id, :role, 0)"
-                        ),
-                        {"id": str(uuid.uuid4()), "committee_id": committee_id, "user_id": user_id, "role": clean(row.get("Role")) or None},
-                    )
+                    self.repository.session.add(account)
+                    await self.repository.session.flush()
+            account_id = account.id if account else None
+            if account_id and board_role_id:
+                await self.repository.session.execute(
+                    text(
+                        "INSERT INTO board_members "
+                        "(id, association_id, account_id, term_start_date, term_end_date, status, is_deleted) "
+                        "VALUES (:id, :association_id, :account_id, :term_start_date, :term_end_date, 'active', 0)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "association_id": association_id,
+                        "account_id": account_id,
+                        "term_start_date": term_start,
+                        "term_end_date": term_end,
+                    },
+                )
+                await self.repository.session.execute(
+                    text("UPDATE accounts SET role_id=:role_id WHERE account_id=:account_id"),
+                    {"role_id": board_role_id, "account_id": account_id},
+                )
+                board_members_created += 1
         return AssociationOnboardResponse(
             association_id=association_id, homeowners_created=homeowner_count,
             tenants_created=tenant_count, units_created=units_created,
-            committees_created=committees_created,
+            committees_created=0,
         )

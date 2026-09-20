@@ -29,6 +29,7 @@ class Employee(Base):
     emergency_contact_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
     id_proof_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     profile_pic_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    temp_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     onboard_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

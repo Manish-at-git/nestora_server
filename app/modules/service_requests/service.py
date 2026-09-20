@@ -12,6 +12,7 @@ from app.modules.auth.models import Account
 from app.modules.service_requests.constants import (
     ADMIN_ROLE_CODES,
     ASSOCIATION_VIEW_ROLE_CODES,
+    RESIDENT_ONLY_ROLE_CODES,
     STATUS_MANAGER_ROLE_CODES,
     ServiceRequestStatus,
 )
@@ -49,6 +50,8 @@ class ServiceRequestService:
 
     async def list(self, account: Account, association_id: str | None = None) -> list[dict]:
         role_code = self.role_code(account)
+        if role_code in RESIDENT_ONLY_ROLE_CODES:
+            return await self.repository.list_for_resident(account.id, account.user_id)
         if role_code not in ASSOCIATION_VIEW_ROLE_CODES:
             return await self.repository.list_for_resident(account.id, account.user_id)
 
@@ -122,6 +125,7 @@ class ServiceRequestService:
                 resident.get("account_id"),
                 f"Service Request Created: {display_id}",
                 f"An admin created a new {payload.service_type} request on your behalf.",
+                request.id,
             )
         else:
             await self.repository.notify_association_admins(
@@ -129,6 +133,7 @@ class ServiceRequestService:
                 f"New Service Request: {display_id}",
                 f"{resident.get('name') or 'A resident'} created a new {payload.service_type} "
                 f"request for Unit {resident.get('unit_number') or 'N/A'}.",
+                request.id,
             )
         return request.id
 
@@ -154,6 +159,7 @@ class ServiceRequestService:
                 resident.get("account_id") if resident else None,
                 f"Service Request Updated: {request.sr_display_id or request.id}",
                 f"Your service request status was updated to '{new_status.value}'.",
+                request.id,
             )
 
     async def map(
@@ -187,6 +193,7 @@ class ServiceRequestService:
             resident.get("account_id"),
             f"Service Request Assigned: {request.sr_display_id or request.id}",
             "A community administrator assigned a service request to your unit.",
+            request.id,
         )
 
     async def delete(self, request_id: str, account: Account) -> None:
@@ -230,12 +237,14 @@ class ServiceRequestService:
                     request.association_id,
                     title,
                     "A resident sent a new message on their service request.",
+                    request.id,
                 )
         else:
             await self.repository.add_notification(
                 resident_account_id,
                 title,
                 "A community administrator sent a new message on your service request.",
+                request.id,
             )
         message_event = await self.repository.message_event(message.id)
         if message_event is None:
@@ -274,8 +283,12 @@ class ServiceRequestService:
         if request is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, ServiceRequestMessage.NOT_FOUND)
         role_code = self.role_code(account)
+        if role_code in RESIDENT_ONLY_ROLE_CODES:
+            if not await self._resident_can_access(request, account):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, ServiceRequestMessage.FORBIDDEN)
+            return request
         if role_code not in ASSOCIATION_VIEW_ROLE_CODES:
-            if request.user_id not in {account.id, account.user_id}:
+            if not await self._resident_can_access(request, account):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, ServiceRequestMessage.FORBIDDEN)
             return request
         if role_code == RoleCode.SUPER_ADMIN:
@@ -286,6 +299,16 @@ class ServiceRequestService:
         if request.association_id not in allowed_ids:
             raise HTTPException(status.HTTP_403_FORBIDDEN, ServiceRequestMessage.FORBIDDEN)
         return request
+
+    async def _resident_can_access(self, request: ServiceRequest, account: Account) -> bool:
+        if request.user_id in {account.id, account.user_id}:
+            return True
+        resident_context = await self.repository.resident_unit_context(account.id, account.user_id)
+        return bool(
+            resident_context
+            and request.unit_id == resident_context.get("unit_id")
+            and request.association_id == resident_context.get("association_id")
+        )
 
     async def _allowed_association_ids(self, account: Account, role_code: RoleCode) -> list[str]:
         if role_code == RoleCode.SUPER_ADMIN:

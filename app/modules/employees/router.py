@@ -50,6 +50,7 @@ def serialize_employee(record: dict) -> EmployeeResponse:
         emergency_contact_name=employee.emergency_contact_name,
         emergency_contact_number=employee.emergency_contact_number,
         id_proof_url=employee.id_proof_url,
+        temp_password=employee.temp_password,
         associations=record["associations"],
         created_at=account.created_at,
     )

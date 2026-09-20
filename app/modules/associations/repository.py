@@ -96,7 +96,8 @@ class AssociationRepository:
     async def settings(self, association_id: str) -> dict | None:
         association = await self.session.execute(
             text(
-                "SELECT onboarding_date, end_date FROM associations "
+                "SELECT COALESCE(onboarding_date, subscription_start, DATE(created_at)) AS onboarding_date, "
+                "end_date FROM associations "
                 "WHERE id = :association_id AND is_deleted = 0"
             ),
             {"association_id": association_id},

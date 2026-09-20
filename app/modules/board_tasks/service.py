@@ -104,7 +104,7 @@ class BoardTaskService:
             notification_type="board_task",
             entity_type="board_task",
             entity_id=task.id,
-            action_url="/board-tasks",
+            action_url=f"/board-tasks/{task.id}",
         )
         return task.id
 
@@ -129,7 +129,7 @@ class BoardTaskService:
             notification_type="board_task",
             entity_type="board_task",
             entity_id=task.id,
-            action_url="/board-tasks",
+            action_url=f"/board-tasks/{task.id}",
         )
 
     async def delete(self, task_id: str, account: Account) -> None:
@@ -170,7 +170,7 @@ class BoardTaskService:
             notification_type="board_task",
             entity_type="board_task",
             entity_id=task.id,
-            action_url="/board-tasks",
+            action_url=f"/board-tasks/{task.id}",
         )
         recipients.discard(account.id)
         event_message = await self.repository.message_event(message.id)
