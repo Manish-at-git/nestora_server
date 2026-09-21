@@ -222,7 +222,6 @@ async def _seed_associations(session: AsyncSession, rows: list[dict]) -> None:
                 name=row["name"],
                 association_code=row.get("association_code"),
                 entity_id=row.get("entity_id"),
-                country=row.get("country"),
                 is_active=bool(row.get("is_active", True)),
                 is_deleted=False,
             )
@@ -334,7 +333,11 @@ async def _seed_vendors(session: AsyncSession, rows: list[dict]) -> None:
         if vendor is not None:
             vendor.is_deleted = False
             continue
-        values = {key: value for key, value in row.items() if key in Vendor.__table__.columns}
+        values = {
+            key: value
+            for key, value in row.items()
+            if key in Vendor.__table__.columns and key not in {"city", "state", "country"}
+        }
         values.setdefault("service_type", "General")
         values["is_deleted"] = False
         session.add(Vendor(**values))

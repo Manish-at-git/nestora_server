@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 
 from openpyxl import load_workbook
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access_codes import generate_access_code
@@ -14,6 +14,7 @@ from app.core.security import generate_secret, hash_password
 from app.modules.auth.models import Account
 from app.modules.entities.models import Entity
 from app.modules.iam.models import Role
+from app.modules.locations.models import City, Country, Region
 from app.modules.associations.messages import AssociationMessage
 from app.modules.associations.models import Association
 from app.modules.associations.repository import AssociationRepository
@@ -190,6 +191,22 @@ class AssociationService:
             return str(value).strip()
 
         association_name = clean(association_data.get("Association Name")) or "Unknown"
+        location = await self.repository.session.execute(
+            select(City)
+            .join(Region, City.region_id == Region.id)
+            .join(Country, Region.country_id == Country.id)
+            .where(
+                func.lower(City.name) == clean(association_data.get("City")).lower(),
+                func.lower(Region.name) == clean(association_data.get("State")).lower(),
+                func.lower(Country.name) == clean(association_data.get("Country")).lower(),
+            )
+        )
+        city = location.scalar_one_or_none()
+        if city is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Country, State, and City must match a seeded location.",
+            )
         association_code = association_name.upper().replace(" ", "")[:4].ljust(4, "0")
         association_id = str(uuid.uuid4())
         association = Association(
@@ -199,10 +216,8 @@ class AssociationService:
             entity_id=entity_id,
             address_line_1=clean(association_data.get("Address 1")) or None,
             address_line_2=clean(association_data.get("Address 2")) or None,
-            city=clean(association_data.get("City")) or None,
-            state=clean(association_data.get("State")) or None,
+            city_id=city.id,
             pincode=clean(association_data.get("Pin Code")) or None,
-            country=clean(association_data.get("Country")) or None,
             url=clean(association_data.get("Association URL")) or None,
             contract_url=contract_url,
             current_plan_id=plan_id,

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.modules.entities.models import Entity
+from app.modules.locations.models import City
 from app.modules.subscriptions.models import SubscriptionPlan
 
 
@@ -19,6 +20,7 @@ class Association(Base):
     entity_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("entities.id"), nullable=True)
     address_line_1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("location_cities.id", ondelete="RESTRICT"), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pincode: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -40,3 +42,4 @@ class Association(Base):
 
     entity = relationship(Entity, foreign_keys=[entity_id], lazy="joined")
     plan = relationship(SubscriptionPlan, foreign_keys=[current_plan_id], lazy="joined")
+    location_city = relationship(City, foreign_keys=[city_id], lazy="joined")

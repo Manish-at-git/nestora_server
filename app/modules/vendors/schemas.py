@@ -24,9 +24,7 @@ class VendorRequest(BaseModel):
     whatsapp_number: str | None = None
     address_line_1: str | None = None
     address_line_2: str | None = None
-    city: str | None = None
-    state: str | None = None
-    country: str | None = None
+    city_id: str | None = None
     zip_code: str | None = None
     pan_number: str | None = None
     registration_number: str | None = None
@@ -71,6 +69,9 @@ class VendorRequest(BaseModel):
 class VendorResponse(VendorRequest):
     model_config = ConfigDict(from_attributes=True)
     id: str
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
     created_at: datetime | None = None
 
 

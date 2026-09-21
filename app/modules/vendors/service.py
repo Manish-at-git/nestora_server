@@ -7,6 +7,7 @@ from app.modules.vendors.messages import VendorMessage
 from app.modules.vendors.models import Vendor
 from app.modules.vendors.repository import VendorRepository
 from app.modules.vendors.schemas import VendorRequest
+from app.modules.locations.models import City
 
 
 class VendorService:
@@ -19,6 +20,8 @@ class VendorService:
     async def create(self, payload: VendorRequest) -> Vendor:
         if await self.repository.name_exists(payload.name):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, VendorMessage.NAME_EXISTS)
+        if payload.city_id and await self.repository.session.get(City, payload.city_id) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected city was not found")
         vendor = Vendor(id=str(uuid.uuid4()), **payload.model_dump())
         self.repository.add(vendor)
         await self.repository.session.flush()
@@ -31,6 +34,8 @@ class VendorService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, VendorMessage.NOT_FOUND)
         if await self.repository.name_exists(payload.name, excluding_id=vendor_id):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, VendorMessage.NAME_EXISTS)
+        if payload.city_id and await self.repository.session.get(City, payload.city_id) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected city was not found")
         for key, value in payload.model_dump().items():
             setattr(vendor, key, value)
         await self.repository.session.flush()

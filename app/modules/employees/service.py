@@ -3,6 +3,7 @@
 import uuid
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access_codes import generate_access_code
@@ -12,6 +13,7 @@ from app.modules.employees.messages import EmployeeMessage
 from app.modules.employees.models import Employee
 from app.modules.employees.repository import EmployeeRepository
 from app.modules.employees.schemas import EmployeeCreateRequest, EmployeeUpdateRequest
+from app.modules.locations.models import City, Region
 
 
 def generate_temporary_password() -> str:
@@ -35,6 +37,12 @@ class EmployeeService:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, EmployeeMessage.ROLE_NOT_FOUND)
         if not await self.repository.associations_exist(payload.association_ids):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, EmployeeMessage.ASSOCIATION_NOT_FOUND)
+        location_result = await self.repository.session.execute(
+            select(City, Region).join(Region, City.region_id == Region.id).where(City.id == payload.city_id)
+        )
+        city, region = location_result.one_or_none() or (None, None)
+        if city is None or region is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected city was not found")
 
         employee_id = str(uuid.uuid4())
         temporary_password = generate_temporary_password()
@@ -43,8 +51,8 @@ class EmployeeService:
             value for value in (
                 payload.address_line_1.strip(),
                 (payload.address_line_2 or "").strip(),
-                payload.city.strip(),
-                payload.state.strip(),
+                city.name,
+                region.name,
             )
             if value
         ) + f" - {payload.pincode.strip()}"
@@ -59,8 +67,7 @@ class EmployeeService:
             last_name=payload.last_name.strip(),
             address_line_1=payload.address_line_1.strip(),
             address_line_2=payload.address_line_2,
-            city=payload.city.strip(),
-            state=payload.state.strip(),
+            city_id=city.id,
             pincode=payload.pincode.strip(),
             emergency_contact_name=payload.emergency_contact_name,
             emergency_contact_number=payload.emergency_contact_number,

@@ -17,9 +17,19 @@ router = APIRouter(
 )
 
 
+def serialize_vendor(vendor) -> VendorResponse:
+    payload = VendorResponse.model_validate(vendor).model_dump()
+    payload.update(
+        city=vendor.location_city.name if vendor.location_city else None,
+        state=vendor.location_city.region.name if vendor.location_city else None,
+        country=vendor.location_city.region.country.name if vendor.location_city else None,
+    )
+    return VendorResponse(**payload)
+
+
 @router.get("", response_model=ApiResponse[list[VendorResponse]])
 async def list_vendors(session: AsyncSession = Depends(get_db_session)) -> dict:
-    return success_response([VendorResponse.model_validate(v) for v in await VendorService(session).list()])
+    return success_response([serialize_vendor(vendor) for vendor in await VendorService(session).list()])
 
 
 @router.post("", response_model=ApiResponse[VendorResponse], status_code=status.HTTP_201_CREATED)
@@ -30,7 +40,7 @@ async def create_vendor(
 ) -> dict:
     async with UnitOfWork(session):
         vendor = await VendorService(session).create(payload)
-    return success_response(VendorResponse.model_validate(vendor), "Vendor created")
+    return success_response(serialize_vendor(vendor), "Vendor created")
 
 
 @router.put("/{vendor_id}", response_model=ApiResponse[VendorMutationResponse])

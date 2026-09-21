@@ -202,7 +202,7 @@ class EmailService:
         Builds and sends a premium branded HTML email containing the 6-digit OTP
         for password recovery.
         """
-        subject = f"{otp} is your Nestora verification code"
+        subject = "Nestora verification code"
         greeting = user_name or to_email.split("@")[0]
 
         text_content = (

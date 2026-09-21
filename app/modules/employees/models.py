@@ -3,10 +3,11 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CHAR, Boolean, Date, DateTime, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import CHAR, Boolean, Date, DateTime, ForeignKey, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.modules.locations.models import City
 
 
 class Employee(Base):
@@ -22,6 +23,7 @@ class Employee(Base):
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     address_line_1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("location_cities.id", ondelete="RESTRICT"), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pincode: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -34,3 +36,4 @@ class Employee(Base):
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    location_city = relationship(City, foreign_keys=[city_id], lazy="joined")

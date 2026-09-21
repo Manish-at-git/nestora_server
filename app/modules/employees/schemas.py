@@ -10,8 +10,7 @@ class EmployeeCreateRequest(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     address_line_1: str = Field(min_length=1, max_length=255)
     address_line_2: str | None = None
-    city: str = Field(min_length=1, max_length=100)
-    state: str = Field(min_length=1, max_length=100)
+    city_id: str = Field(min_length=1, max_length=36)
     pincode: str = Field(min_length=1, max_length=20)
     email: EmailStr
     contact_number: str = Field(min_length=1, max_length=30)
@@ -61,6 +60,7 @@ class EmployeeResponse(BaseModel):
     address: str | None = None
     address_line_1: str | None = None
     address_line_2: str | None = None
+    city_id: str | None = None
     city: str | None = None
     state: str | None = None
     pincode: str | None = None

@@ -49,6 +49,7 @@ from app.modules.service_requests.router import router as service_requests_route
 from app.modules.subscriptions.router import router as subscriptions_router
 from app.modules.users.router import router as users_router
 from app.modules.vendors.router import router as vendors_router
+from app.modules.locations.router import router as locations_router
 
 
 @asynccontextmanager
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
 
     install_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(locations_router, prefix="/api")
     app.include_router(storage_router, prefix="/api")
     app.include_router(realtime_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")

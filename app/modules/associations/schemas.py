@@ -13,6 +13,7 @@ class AssociationResponse(BaseModel):
     entity_name: str | None = None
     address_line_1: str | None = None
     address_line_2: str | None = None
+    city_id: str | None = None
     city: str | None = None
     state: str | None = None
     pincode: str | None = None

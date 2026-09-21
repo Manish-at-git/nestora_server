@@ -34,12 +34,18 @@ never connects to the legacy database at runtime.
 4. Copy `.env.example` to `.env` and set strong database and cookie values.
 5. Create a new empty MySQL database: `python -m scripts.create_database`.
 6. Create its tables: `python -m alembic upgrade head`.
-7. Seed the saved roles, features, role-feature permissions, and bootstrap administrator:
+7. Seed country, region, district, and city reference data:
+   `python -m scripts.seed_locations`.
+8. Seed the saved roles, features, role-feature permissions, and bootstrap administrator:
    `python -m scripts.seed_auth`.
-8. Run the API through the installed environment: `python -m uvicorn app.main:app --reload`.
+9. Run the API through the installed environment: `python -m uvicorn app.main:app --reload`.
 
 The commands above are intentionally manual. They can create or alter the
 database, so do not run them against the legacy Nestora database.
+
+`scripts.seed_locations` verifies the checksum of its pinned India state and
+district source before inserting data. For an offline run, provide that exact
+JSON snapshot explicitly with `--india-data-file /path/to/india.json`.
 
 ## Frontend integration note
 

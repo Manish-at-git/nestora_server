@@ -1,10 +1,11 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CHAR, Boolean, Date, DateTime, Numeric, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import CHAR, Boolean, Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.modules.locations.models import City
 
 
 class Vendor(Base):
@@ -30,6 +31,7 @@ class Vendor(Base):
     whatsapp_number: Mapped[str | None] = mapped_column(String(50))
     address_line_1: Mapped[str | None] = mapped_column(Text)
     address_line_2: Mapped[str | None] = mapped_column(Text)
+    city_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("location_cities.id", ondelete="RESTRICT"), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100))
     state: Mapped[str | None] = mapped_column(String(100))
     country: Mapped[str | None] = mapped_column(String(100))
@@ -74,3 +76,4 @@ class Vendor(Base):
     services_offered_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    location_city = relationship(City, foreign_keys=[city_id], lazy="joined")
