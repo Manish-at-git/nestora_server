@@ -127,7 +127,51 @@ class PermissionRepository:
             .where(Feature.is_deleted.is_(False), Feature.is_active.is_(True))
             .order_by(Feature.name)
         )
-        return list((await self.session.execute(statement)).tuples())
+        rows = list((await self.session.execute(statement)).tuples())
+
+        # Order by the actual parent_id relationship, not by parent names. A
+        # name-based SQL sort can make an unrelated child appear below the
+        # preceding root feature when parent names or feature availability
+        # differ.
+        rows_by_id = {row[0].id: row for row in rows}
+        children_by_parent: dict[str, list[tuple]] = {}
+        root_rows: list[tuple] = []
+
+        for row in rows:
+            feature = row[0]
+            if feature.parent_id and feature.parent_id in rows_by_id:
+                children_by_parent.setdefault(feature.parent_id, []).append(row)
+            else:
+                root_rows.append(row)
+
+        def sort_key(row: tuple) -> str:
+            return (row[0].name or "").casefold()
+
+        for child_rows in children_by_parent.values():
+            child_rows.sort(key=sort_key)
+        root_rows.sort(key=sort_key)
+
+        ordered_rows: list[tuple] = []
+        visited: set[str] = set()
+
+        def append_branch(row: tuple) -> None:
+            feature = row[0]
+            if feature.id in visited:
+                return
+            visited.add(feature.id)
+            ordered_rows.append(row)
+            for child_row in children_by_parent.get(feature.id, []):
+                append_branch(child_row)
+
+        for row in root_rows:
+            append_branch(row)
+
+        # Preserve rows in malformed/cyclic data rather than silently hiding
+        # them from the permission matrix.
+        for row in rows:
+            append_branch(row)
+
+        return ordered_rows
 
     async def soft_delete(self, permission: RoleFeaturePermission) -> None:
         permission.is_deleted = True

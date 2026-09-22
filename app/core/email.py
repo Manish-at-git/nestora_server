@@ -17,6 +17,7 @@ from email.message import EmailMessage
 from typing import Any
 
 from app.core.config import Settings, get_settings
+from app.core.email_templates import password_reset_otp_email
 
 logger = logging.getLogger("nestora.server.email")
 
@@ -195,182 +196,20 @@ class EmailService:
         self,
         to_email: str,
         otp: str,
-        expires_in_minutes: int = 30,
+        expires_in_seconds: int = 60,
         user_name: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Builds and sends a premium branded HTML email containing the 6-digit OTP
-        for password recovery.
-        """
-        subject = "Nestora verification code"
-        greeting = user_name or to_email.split("@")[0]
-
-        text_content = (
-            f"Hello {greeting},\n\n"
-            f"You requested a password reset for your Nestora account.\n\n"
-            f"Your verification code is: {otp}\n\n"
-            f"This code expires in {expires_in_minutes} minutes.\n\n"
-            f"If you did not request this, please safely ignore this email.\n\n"
-            f"— Nestora Platform\n"
+        rendered = password_reset_otp_email(
+            name=user_name or to_email.split("@")[0],
+            otp=otp,
+            expires_in_seconds=expires_in_seconds,
         )
-
-        html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{subject}</title>
-  <style>
-    body {{
-      margin: 0;
-      padding: 0;
-      background-color: #F9F8F6;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      color: #1C1C1A;
-      -webkit-font-smoothing: antialiased;
-    }}
-    .wrapper {{
-      width: 100%;
-      background-color: #F9F8F6;
-      padding: 40px 16px;
-    }}
-    .container {{
-      max-width: 520px;
-      margin: 0 auto;
-      background-color: #FFFFFF;
-      border: 1px solid #E5E3DB;
-      border-radius: 24px;
-      overflow: hidden;
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.04);
-    }}
-    .header {{
-      background: linear-gradient(135deg, #1E3629 0%, #2C4C3B 100%);
-      padding: 36px 32px 30px 32px;
-      text-align: center;
-    }}
-    .brand {{
-      color: #FFFFFF;
-      font-family: Georgia, serif;
-      font-size: 28px;
-      font-style: italic;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin: 0 0 6px 0;
-    }}
-    .brand-subtitle {{
-      color: rgba(255, 255, 255, 0.7);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.25em;
-      margin: 0;
-    }}
-    .content {{
-      padding: 36px 32px;
-    }}
-    .heading {{
-      font-family: Georgia, serif;
-      font-size: 24px;
-      font-weight: 600;
-      color: #1C1C1A;
-      margin: 0 0 12px 0;
-    }}
-    .subtext {{
-      font-size: 14px;
-      line-height: 1.6;
-      color: #686864;
-      margin: 0 0 28px 0;
-    }}
-    .otp-box {{
-      background: #F4F6F4;
-      border: 1.5px dashed #2C4C3B;
-      border-radius: 16px;
-      padding: 24px;
-      text-align: center;
-      margin: 0 0 28px 0;
-    }}
-    .otp-code {{
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 38px;
-      font-weight: 700;
-      letter-spacing: 8px;
-      color: #2C4C3B;
-      margin: 0;
-      padding-left: 8px;
-    }}
-    .otp-label {{
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.2em;
-      color: #686864;
-      margin-top: 8px;
-    }}
-    .expiry-note {{
-      font-size: 13px;
-      color: #C05A46;
-      font-weight: 500;
-      text-align: center;
-      margin: 0 0 24px 0;
-    }}
-    .security-notice {{
-      background-color: #FAF9F7;
-      border: 1px solid #EAE8E1;
-      border-radius: 12px;
-      padding: 14px 16px;
-      font-size: 12px;
-      color: #686864;
-      line-height: 1.5;
-    }}
-    .footer {{
-      padding: 24px 32px;
-      border-top: 1px solid #E5E3DB;
-      background-color: #FAFAF8;
-      text-align: center;
-      font-size: 11px;
-      color: #8C8C88;
-      line-height: 1.5;
-    }}
-  </style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="container">
-      <div class="header">
-        <div class="brand">Nestora</div>
-        <p class="brand-subtitle">Residential Management & Governance</p>
-      </div>
-      <div class="content">
-        <h1 class="heading">Reset your password</h1>
-        <p class="subtext">
-          Hello {greeting},<br>
-          We received a request to reset the password for your Nestora account. Enter the verification code below:
-        </p>
-
-        <div class="otp-box">
-          <div class="otp-code">{otp}</div>
-          <div class="otp-label">One-Time Verification Code</div>
-        </div>
-
-        <p class="expiry-note">&#9201; This code expires in {expires_in_minutes} minutes.</p>
-
-        <div class="security-notice">
-          <strong>Security Notice:</strong> If you did not request a password reset, you can safely ignore this email. Your account credentials remain secure.
-        </div>
-      </div>
-      <div class="footer">
-        &copy; Nestora Platform. All rights reserved.<br>
-        A secure membership and residential community operating system.
-      </div>
-    </div>
-  </div>
-</body>
-</html>"""
-
         return await self.send_email(
             to_email=to_email,
-            subject=subject,
-            html_content=html_content,
-            text_content=text_content,
-            to_name=greeting,
+            subject=rendered.subject,
+            html_content=rendered.html,
+            text_content=rendered.text,
+            to_name=user_name or to_email.split("@")[0],
         )
 
 

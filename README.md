@@ -29,6 +29,7 @@ never connects to the legacy database at runtime.
    ```bash
    python -m pip install --upgrade pip
    python -m pip install -e .
+   npm install
    ```
 
 4. Copy `.env.example` to `.env` and set strong database and cookie values.

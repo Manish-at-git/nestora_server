@@ -18,7 +18,43 @@ class FeatureRepository:
             .where(Feature.is_deleted.is_(False))
             .order_by(Feature.order_index, Feature.name)
         )
-        return list((await self.session.scalars(statement)).all())
+        features = list((await self.session.scalars(statement)).all())
+        features_by_id = {feature.id: feature for feature in features}
+        children_by_parent: dict[str, list[Feature]] = {}
+        root_features: list[Feature] = []
+
+        for feature in features:
+            if feature.parent_id and feature.parent_id in features_by_id:
+                children_by_parent.setdefault(feature.parent_id, []).append(feature)
+            else:
+                root_features.append(feature)
+
+        def sort_key(feature: Feature) -> tuple[int, str]:
+            return (feature.order_index or 0, (feature.name or "").casefold())
+
+        for children in children_by_parent.values():
+            children.sort(key=sort_key)
+        root_features.sort(key=sort_key)
+
+        ordered_features: list[Feature] = []
+        visited: set[str] = set()
+
+        def append_branch(feature: Feature) -> None:
+            if feature.id in visited:
+                return
+            visited.add(feature.id)
+            ordered_features.append(feature)
+            for child in children_by_parent.get(feature.id, []):
+                append_branch(child)
+
+        for feature in root_features:
+            append_branch(feature)
+
+        # Keep orphaned or cyclic records visible rather than dropping them.
+        for feature in features:
+            append_branch(feature)
+
+        return ordered_features
 
     async def get(self, feature_id: str) -> Feature | None:
         statement = (

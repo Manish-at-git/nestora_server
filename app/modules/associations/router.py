@@ -1,13 +1,17 @@
 """Protected Association directory routes."""
 
+import asyncio
+import logging
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleCode
 from app.core.dependencies import AuthContext, get_auth_context, require_csrf, require_role
+from app.core.email import email_service
+from app.core.email_templates import sample_email_templates, registration_code_email
 from app.core.responses import ApiResponse, success_response
 from app.core.storage import StorageService
 from app.db.session import get_db_session
@@ -25,6 +29,39 @@ from app.modules.associations.service import AssociationService
 
 
 router = APIRouter(prefix="/admin/associations", tags=["Associations"])
+logger = logging.getLogger("nestora.server.associations")
+
+
+async def _send_registration_emails(deliveries: list[dict[str, str]]) -> None:
+    """Attempt onboarding emails after the response; delivery must not affect onboarding."""
+
+    async def send_registration_email(delivery: dict[str, str]) -> dict:
+        rendered = registration_code_email(
+            name=delivery["name"],
+            registration_code=delivery["registration_code"],
+            association_name=delivery["association_name"],
+        )
+        return await email_service.send_email(
+            to_email=delivery["email"],
+            to_name=delivery["name"],
+            subject=rendered.subject,
+            html_content=rendered.html,
+            text_content=rendered.text,
+        )
+
+    results = await asyncio.gather(
+        *(send_registration_email(delivery) for delivery in deliveries),
+        return_exceptions=True,
+    )
+    for delivery, email_result in zip(deliveries, results):
+        if isinstance(email_result, Exception):
+            logger.warning("Registration email ignored for %s: %s", delivery["email"], email_result)
+        elif not email_result.get("ok"):
+            logger.warning(
+                "Registration email ignored for %s: %s",
+                delivery["email"],
+                email_result.get("error", "unknown email delivery error"),
+            )
 
 
 @router.get(
@@ -73,6 +110,8 @@ async def download_excel_template() -> StreamingResponse:
         "Board Members": [
             "Block Name",
             "Unit Number",
+            "First Name",
+            "Last Name",
             "Role",
         ],
     }
@@ -117,6 +156,7 @@ async def preview_onboarding_workbook(
     dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN))],
 )
 async def onboard_association(
+    background_tasks: BackgroundTasks,
     entity_id: str = Form(...),
     plan_id: str | None = Form(None),
     contract_file: UploadFile | None = File(None),
@@ -129,9 +169,19 @@ async def onboard_association(
     if contract_file and contract_file.filename:
         uploaded = await StorageService().upload(contract_file)
         contract_url = uploaded.get("url")
+    service = AssociationService(session)
     async with UnitOfWork(session):
-        result = await AssociationService(session).onboard(workbook_bytes, entity_id, plan_id, contract_url)
+        result = await service.onboard(workbook_bytes, entity_id, plan_id, contract_url)
+
+    if service.registration_deliveries:
+        background_tasks.add_task(_send_registration_emails, list(service.registration_deliveries))
     return success_response(result, "Association onboarded successfully")
+
+
+@router.get("/email-templates")
+async def preview_email_templates() -> dict:
+    """Return the same rendered email samples used by the design-system preview."""
+    return success_response(sample_email_templates(), "Email templates loaded")
 
 
 def serialize_association(association) -> AssociationResponse:

@@ -51,6 +51,7 @@ class PasswordResetDelivery:
 
     email: str
     token: str
+    user_name: str | None = None
 
 
 class AuthService:
@@ -343,7 +344,11 @@ class AuthService:
                 expires_at=now + timedelta(minutes=self.settings.password_reset_ttl_minutes),
             )
         )
-        return PasswordResetDelivery(email=account.email, token=token)
+        return PasswordResetDelivery(
+            email=account.email,
+            token=token,
+            user_name=await self._account_name(account),
+        )
 
     async def request_password_reset_otp(self, email: str) -> PasswordResetDelivery | None:
         """Create a six-digit challenge for the legacy-compatible OTP recovery flow."""
@@ -357,10 +362,14 @@ class AuthService:
             PasswordResetChallenge(
                 account_id=account.id,
                 token_hash=hash_secret(otp),
-                expires_at=now + timedelta(minutes=self.settings.password_reset_ttl_minutes),
+                expires_at=now + timedelta(seconds=self.settings.password_reset_otp_ttl_seconds),
             )
         )
-        return PasswordResetDelivery(email=account.email, token=otp)
+        return PasswordResetDelivery(
+            email=account.email,
+            token=otp,
+            user_name=await self._account_name(account),
+        )
 
     async def verify_password_reset_otp(self, email: str, otp: str) -> bool:
         """Verify an OTP only for the account that requested it."""

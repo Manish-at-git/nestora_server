@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     frontend_url: str = "http://localhost:5173"
     password_reset_ttl_minutes: int = Field(default=30, ge=5, le=24 * 60)
+    password_reset_otp_ttl_seconds: int = Field(default=60, ge=30, le=24 * 60 * 60)
     encryption_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("ENCRYPTION_KEY", "BANK_ENCRYPTION_KEY"),

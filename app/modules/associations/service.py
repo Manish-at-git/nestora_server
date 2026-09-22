@@ -30,6 +30,7 @@ from app.modules.users.models import UserCode, UserDetail
 class AssociationService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = AssociationRepository(session)
+        self.registration_deliveries: list[dict[str, str]] = []
 
     @staticmethod
     def workbook_metrics(workbook_bytes: bytes) -> dict[str, int]:
@@ -258,7 +259,7 @@ class AssociationService:
             units_created += 1
 
         homeowner_count = tenant_count = 0
-        homeowner_units: dict[str, str] = {}
+        homeowners_by_name: dict[tuple[str, str], list[tuple[str, str]]] = {}
         for row in rows("Homeowner Details"):
             block_name, unit_number = clean(row.get("Block Name")), clean(row.get("Unit Number"))
             if not block_name or not unit_number:
@@ -277,7 +278,20 @@ class AssociationService:
                 address=address, role_id=roles[RoleCode.HOMEOWNER], is_deleted=False,
             )
             self.repository.session.add(homeowner)
-            homeowner_units[unit_id] = homeowner.user_id
+            if homeowner.email:
+                self.registration_deliveries.append(
+                    {
+                        "email": homeowner.email.lower(),
+                        "name": homeowner.name,
+                        "registration_code": login_code.login_code,
+                        "association_name": association_name,
+                    }
+                )
+            homeowner_name_key = (
+                first_name.casefold(),
+                last_name.casefold(),
+            )
+            homeowners_by_name.setdefault(homeowner_name_key, []).append((homeowner.user_id, unit_id))
             homeowner_count += 1
             if clean(row.get("Rented")).lower() == "yes":
                 await self.repository.session.execute(
@@ -315,8 +329,27 @@ class AssociationService:
         term_start = date.today()
         term_end = term_start + timedelta(days=365)
         for row in board_member_rows:
-            unit_id = unit_map.get((clean(row.get("Block Name")), clean(row.get("Unit Number"))))
-            user_id = homeowner_units.get(unit_id) if unit_id else None
+            board_member_name_key = (
+                clean(row.get("First Name")).casefold(),
+                clean(row.get("Last Name")).casefold(),
+            )
+            matching_homeowners = homeowners_by_name.get(board_member_name_key, [])
+            if not matching_homeowners:
+                # A board row is eligible only when its name is present in the
+                # Homeowner Details sheet. Unit data is retained for identifying
+                # the correct homeowner when the same name appears more than once.
+                continue
+
+            board_unit_id = unit_map.get((clean(row.get("Block Name")), clean(row.get("Unit Number"))))
+            if board_unit_id:
+                unit_matches = [
+                    user_id for user_id, unit_id in matching_homeowners if unit_id == board_unit_id
+                ]
+                user_id = unit_matches[0] if unit_matches else (
+                    matching_homeowners[0][0] if len(matching_homeowners) == 1 else None
+                )
+            else:
+                user_id = matching_homeowners[0][0] if len(matching_homeowners) == 1 else None
             account = await self.repository.session.scalar(
                 select(Account).where(Account.user_id == user_id)
             ) if user_id else None

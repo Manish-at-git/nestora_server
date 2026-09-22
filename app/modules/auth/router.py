@@ -323,7 +323,9 @@ async def request_password_reset(
         delivery = await AuthService(session, settings).request_password_reset(str(payload.email))
     email_result = None
     if delivery is not None:
-        email_result = await PasswordResetNotifier(settings).send(delivery.email, delivery.token)
+        email_result = await PasswordResetNotifier(settings).send(
+            delivery.email, delivery.token, delivery.user_name
+        )
     else:
         logger.warning("[PASSWORD RESET EMAIL NOT ATTEMPTED] reason=account_not_found_or_inactive")
     response_data = PasswordResetRequestResponse()
@@ -348,7 +350,9 @@ async def request_password_reset_otp(
         delivery = await AuthService(session, settings).request_password_reset_otp(str(payload.email))
     email_result = None
     if delivery is not None:
-        email_result = await PasswordResetNotifier(settings).send_otp(delivery.email, delivery.token)
+        email_result = await PasswordResetNotifier(settings).send_otp(
+            delivery.email, delivery.token, delivery.user_name
+        )
     else:
         logger.warning("[PASSWORD RESET EMAIL NOT ATTEMPTED] reason=account_not_found_or_inactive")
     response_data = PasswordResetRequestResponse()
