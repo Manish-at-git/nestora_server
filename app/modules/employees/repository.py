@@ -5,10 +5,12 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.contact_normalization import normalize_email, normalize_phone
 from app.modules.associations.models import Association
 from app.modules.auth.models import Account
 from app.modules.employees.models import Employee
 from app.modules.iam.models import Role
+from app.modules.users.models import UserDetail
 
 
 class EmployeeRepository:
@@ -16,7 +18,29 @@ class EmployeeRepository:
         self.session = session
 
     async def email_exists(self, email: str) -> bool:
-        return await self.session.scalar(select(Account.id).where(Account.email == email)) is not None
+        target = normalize_email(email)
+        users = await self.session.scalars(select(UserDetail).where(UserDetail.is_deleted.is_(False)))
+        if any(normalize_email(user.email) == target for user in users.all()):
+            return True
+        employees = await self.session.scalars(
+            select(Employee).where(Employee.is_deleted.is_(False))
+        )
+        if any(normalize_email(employee.email) == target for employee in employees.all()):
+            return True
+        accounts = await self.session.scalars(select(Account))
+        return any(normalize_email(account.email) == target for account in accounts.all())
+
+    async def phone_exists(self, phone: str) -> bool:
+        target = normalize_phone(phone)
+        if not target:
+            return False
+        users = await self.session.scalars(select(UserDetail).where(UserDetail.is_deleted.is_(False)))
+        if any(normalize_phone(user.contact_number) == target for user in users.all()):
+            return True
+        employees = await self.session.scalars(
+            select(Employee).where(Employee.is_deleted.is_(False))
+        )
+        return any(normalize_phone(employee.contact_number) == target for employee in employees.all())
 
     async def role(self, role_id: str) -> Role | None:
         return await self.session.scalar(

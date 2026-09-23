@@ -5,6 +5,7 @@ from enum import StrEnum
 
 class EmployeeMessage(StrEnum):
     EMAIL_EXISTS = "Email already exists"
+    PHONE_EXISTS = "Phone number already exists"
     ROLE_NOT_FOUND = "Role not found"
     ASSOCIATION_NOT_FOUND = "Association not found"
     NOT_FOUND = "Employee not found"

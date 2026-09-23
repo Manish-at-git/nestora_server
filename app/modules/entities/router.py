@@ -23,8 +23,8 @@ router = APIRouter(
 )
 
 
-def serialize_entity(entity) -> EntityResponse:
-    """Map an ORM entity and its joined type into the client response shape."""
+def serialize_entity(entity, is_onboarded: bool | None = None) -> EntityResponse:
+    """Map an entity and its derived onboarding status into the client response shape."""
     return EntityResponse(
         id=entity.id,
         entity_type_id=entity.entity_type_id,
@@ -32,6 +32,7 @@ def serialize_entity(entity) -> EntityResponse:
         association_id=entity.association_id,
         name=entity.name,
         description=entity.description,
+        is_onboarded=(entity.association_id is not None if is_onboarded is None else is_onboarded),
         created_at=entity.created_at,
     )
 
@@ -40,7 +41,9 @@ def serialize_entity(entity) -> EntityResponse:
 async def list_entities(session: AsyncSession = Depends(get_db_session)) -> dict:
     """List active entities for an authorized administrator."""
     entities = await EntityService(session).list()
-    return success_response([serialize_entity(entity) for entity in entities])
+    return success_response(
+        [serialize_entity(entity, is_onboarded) for entity, is_onboarded in entities]
+    )
 
 
 @router.post("", response_model=ApiResponse[EntityResponse], status_code=status.HTTP_201_CREATED)

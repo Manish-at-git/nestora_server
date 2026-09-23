@@ -6,6 +6,7 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.contact_normalization import normalize_email, normalize_phone
 from app.modules.users.messages import UserMessage
 from app.modules.users.models import UserCode, UserDetail
 from app.modules.users.repository import UserRepository
@@ -22,9 +23,12 @@ class UserService:
         return await self.repository.list()
 
     async def create(self, payload: UserCreateRequest) -> str:
-        email = str(payload.email).lower()
+        email = normalize_email(payload.email)
+        phone = normalize_phone(payload.contact_number)
         if await self.repository.email_exists(email):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.EMAIL_EXISTS)
+        if await self.repository.phone_exists(phone):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.PHONE_EXISTS)
         if await self.repository.role(payload.role_id) is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ROLE_NOT_FOUND)
         if not await self.repository.association_exists(payload.association_id):
@@ -36,7 +40,7 @@ class UserService:
             name=f"{payload.first_name.strip()} {payload.last_name.strip()}",
             address="",
             email=email,
-            contact_number=payload.contact_number.strip(),
+            contact_number=phone,
             first_name=payload.first_name.strip(),
             last_name=payload.last_name.strip(),
             role_id=payload.role_id,
@@ -51,9 +55,16 @@ class UserService:
         user = await self.repository.get(user_id)
         if user is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, UserMessage.NOT_FOUND)
-        email = str(payload.email).lower() if payload.email else user.email
-        if email != user.email and await self.repository.email_exists(email, excluding_user_id=user_id):
+        email = normalize_email(payload.email) if payload.email else normalize_email(user.email)
+        phone = normalize_phone(payload.contact_number) if payload.contact_number else normalize_phone(user.contact_number)
+        if payload.email and email != normalize_email(user.email) and await self.repository.email_exists(
+            email, excluding_user_id=user_id
+        ):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.EMAIL_EXISTS)
+        if payload.contact_number and phone != normalize_phone(user.contact_number) and await self.repository.phone_exists(
+            phone, excluding_user_id=user_id
+        ):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.PHONE_EXISTS)
         if payload.association_id and not await self.repository.association_exists(payload.association_id):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ASSOCIATION_NOT_FOUND)
         if payload.role_name:

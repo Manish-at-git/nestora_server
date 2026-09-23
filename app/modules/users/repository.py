@@ -6,8 +6,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access_codes import generate_access_code
+from app.core.contact_normalization import normalize_email, normalize_phone
 from app.modules.associations.models import Association
 from app.modules.auth.models import Account
+from app.modules.employees.models import Employee
 from app.modules.iam.models import Role
 from app.modules.users.models import UserCode, UserDetail
 
@@ -17,18 +19,42 @@ class UserRepository:
         self.session = session
 
     async def email_exists(self, email: str, excluding_user_id: str | None = None) -> bool:
-        user_statement = select(UserDetail.user_id).where(
-            UserDetail.email == email,
-            UserDetail.is_deleted.is_(False),
+        target = normalize_email(email)
+        users = await self.session.scalars(
+            select(UserDetail).where(UserDetail.is_deleted.is_(False))
         )
-        if excluding_user_id:
-            user_statement = user_statement.where(UserDetail.user_id != excluding_user_id)
-        if await self.session.scalar(user_statement) is not None:
+        if any(
+            user.user_id != excluding_user_id and normalize_email(user.email) == target
+            for user in users.all()
+        ):
             return True
-        account_statement = select(Account.id).where(Account.email == email)
-        if excluding_user_id:
-            account_statement = account_statement.where(Account.user_id != excluding_user_id)
-        return await self.session.scalar(account_statement) is not None
+        employees = await self.session.scalars(
+            select(Employee).where(Employee.is_deleted.is_(False))
+        )
+        if any(normalize_email(employee.email) == target for employee in employees.all()):
+            return True
+        accounts = await self.session.scalars(select(Account))
+        return any(
+            account.user_id != excluding_user_id and normalize_email(account.email) == target
+            for account in accounts.all()
+        )
+
+    async def phone_exists(self, phone: str, excluding_user_id: str | None = None) -> bool:
+        target = normalize_phone(phone)
+        if not target:
+            return False
+        users = await self.session.scalars(
+            select(UserDetail).where(UserDetail.is_deleted.is_(False))
+        )
+        if any(
+            user.user_id != excluding_user_id and normalize_phone(user.contact_number) == target
+            for user in users.all()
+        ):
+            return True
+        employees = await self.session.scalars(
+            select(Employee).where(Employee.is_deleted.is_(False))
+        )
+        return any(normalize_phone(employee.contact_number) == target for employee in employees.all())
 
     async def role(self, role_id: str | None = None, role_name: str | None = None) -> Role | None:
         statement = select(Role).where(Role.is_active.is_(True), Role.is_deleted.is_(False))

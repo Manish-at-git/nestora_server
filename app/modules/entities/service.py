@@ -17,7 +17,7 @@ class EntityService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = EntityRepository(session)
 
-    async def list(self) -> list[Entity]:
+    async def list(self) -> list[tuple[Entity, bool]]:
         """List active entities for an authorized administrator."""
         return await self.repository.list()
 

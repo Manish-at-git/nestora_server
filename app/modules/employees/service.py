@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access_codes import generate_access_code
+from app.core.contact_normalization import normalize_email, normalize_phone
 from app.core.security import hash_password
 from app.modules.auth.models import Account
 from app.modules.employees.messages import EmployeeMessage
@@ -29,9 +30,12 @@ class EmployeeService:
         return await self.repository.list()
 
     async def create(self, payload: EmployeeCreateRequest) -> tuple[str, str]:
-        email = str(payload.email).lower()
+        email = normalize_email(payload.email)
+        phone = normalize_phone(payload.contact_number)
         if await self.repository.email_exists(email):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, EmployeeMessage.EMAIL_EXISTS)
+        if await self.repository.phone_exists(phone):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, EmployeeMessage.PHONE_EXISTS)
         role = await self.repository.role(payload.role_id)
         if role is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, EmployeeMessage.ROLE_NOT_FOUND)
@@ -62,7 +66,7 @@ class EmployeeService:
             name=full_name,
             address=full_address,
             email=email,
-            contact_number=payload.contact_number.strip(),
+            contact_number=phone,
             first_name=payload.first_name.strip(),
             last_name=payload.last_name.strip(),
             address_line_1=payload.address_line_1.strip(),

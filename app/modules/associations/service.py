@@ -9,9 +9,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access_codes import generate_access_code
+from app.core.contact_normalization import normalize_email, normalize_phone
 from app.core.constants import AccountStatus, RoleCode
 from app.core.security import generate_secret, hash_password
 from app.modules.auth.models import Account
+from app.modules.employees.models import Employee
 from app.modules.entities.models import Entity
 from app.modules.iam.models import Role
 from app.modules.locations.models import City, Country, Region
@@ -146,6 +148,92 @@ class AssociationService:
             setattr(association, key, value)
         await self.repository.session.flush()
 
+    async def _validate_workbook_contacts(
+        self, homeowner_rows: list[dict], tenant_rows: list[tuple[int, dict]]
+    ) -> None:
+        """Reject duplicate resident contacts before staging onboarding records."""
+        existing_emails: dict[str, str] = {}
+        existing_phones: dict[str, str] = {}
+
+        users = await self.repository.session.scalars(
+            select(UserDetail).where(UserDetail.is_deleted.is_(False))
+        )
+        for user in users.all():
+            email = normalize_email(user.email)
+            phone = normalize_phone(user.contact_number)
+            if email:
+                existing_emails[email] = "an existing user"
+            if phone:
+                existing_phones[phone] = "an existing user"
+
+        employees = await self.repository.session.scalars(
+            select(Employee).where(Employee.is_deleted.is_(False))
+        )
+        for employee in employees.all():
+            email = normalize_email(employee.email)
+            phone = normalize_phone(employee.contact_number)
+            if email:
+                existing_emails[email] = "an existing employee"
+            if phone:
+                existing_phones[phone] = "an existing employee"
+
+        accounts = await self.repository.session.scalars(select(Account))
+        for account in accounts.all():
+            email = normalize_email(account.email)
+            if email:
+                existing_emails[email] = "an existing account"
+
+        seen_emails: dict[str, tuple[str, int]] = {}
+        seen_phones: dict[str, tuple[str, int]] = {}
+
+        def validate_contact(
+            source: str, row_number: int, email_value: object, phone_value: object
+        ) -> None:
+            email = normalize_email(email_value)
+            phone = normalize_phone(phone_value)
+            if email in existing_emails:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Email already exists for {existing_emails[email]}: {email}",
+                )
+            if phone and phone in existing_phones:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Phone number already exists for {existing_phones[phone]}: {phone}",
+                )
+            if email in seen_emails:
+                previous_source, previous_row = seen_emails[email]
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Duplicate email found: {email}"
+                )
+            if phone and phone in seen_phones:
+                previous_source, previous_row = seen_phones[phone]
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Duplicate phone number found in {source} and {previous_source}: "
+                    f"{phone} (rows {previous_row} and {row_number})",
+                )
+            if email:
+                seen_emails[email] = (source, row_number)
+            if phone:
+                seen_phones[phone] = (source, row_number)
+
+        for row_number, row in enumerate(homeowner_rows, start=2):
+            validate_contact(
+                "Homeowner Details",
+                row_number,
+                row.get("Email"),
+                row.get("Phone Number"),
+            )
+        for row_number, row in tenant_rows:
+            validate_contact(
+                "Homeowner Details tenant fields",
+                row_number,
+                row.get("Tenant Email Id"),
+                row.get("Tenant Contact Number"),
+            )
+
     async def onboard(
         self,
         workbook_bytes: bytes,
@@ -190,6 +278,14 @@ class AssociationService:
             if value is None:
                 return ""
             return str(value).strip()
+
+        homeowner_rows = rows("Homeowner Details")
+        tenant_rows = [
+            (row_number, row)
+            for row_number, row in enumerate(homeowner_rows, start=2)
+            if clean(row.get("Rented")).lower() == "yes" and clean(row.get("Tenant Email Id"))
+        ]
+        await self._validate_workbook_contacts(homeowner_rows, tenant_rows)
 
         association_name = clean(association_data.get("Association Name")) or "Unknown"
         location = await self.repository.session.execute(
@@ -260,7 +356,7 @@ class AssociationService:
 
         homeowner_count = tenant_count = 0
         homeowners_by_name: dict[tuple[str, str], list[tuple[str, str]]] = {}
-        for row in rows("Homeowner Details"):
+        for row in homeowner_rows:
             block_name, unit_number = clean(row.get("Block Name")), clean(row.get("Unit Number"))
             if not block_name or not unit_number:
                 continue
@@ -273,8 +369,8 @@ class AssociationService:
             self.repository.session.add(login_code)
             homeowner = UserDetail(
                 user_id=str(uuid.uuid4()), code_id=login_code.id, name=f"{first_name} {last_name}".strip(),
-                first_name=first_name, last_name=last_name, email=clean(row.get("Email")),
-                contact_number=clean(row.get("Phone Number")), unit_id=unit_id, association_id=association_id,
+                first_name=first_name, last_name=last_name, email=normalize_email(row.get("Email")),
+                contact_number=normalize_phone(row.get("Phone Number")), unit_id=unit_id, association_id=association_id,
                 address=address, role_id=roles[RoleCode.HOMEOWNER], is_deleted=False,
             )
             self.repository.session.add(homeowner)
@@ -297,7 +393,7 @@ class AssociationService:
                 await self.repository.session.execute(
                     text("UPDATE units SET is_rented = 1 WHERE id = :id"), {"id": unit_id}
                 )
-                tenant_email = clean(row.get("Tenant Email Id"))
+                tenant_email = normalize_email(row.get("Tenant Email Id"))
                 if tenant_email:
                     tenant_code = UserCode(id=str(uuid.uuid4()), login_code=generate_access_code(), status="active")
                     self.repository.session.add(tenant_code)
@@ -305,7 +401,7 @@ class AssociationService:
                         user_id=str(uuid.uuid4()), code_id=tenant_code.id,
                         name=f"{clean(row.get('Tenant First Name'))} {clean(row.get('Tenant Last Name'))}".strip(),
                         first_name=clean(row.get("Tenant First Name")), last_name=clean(row.get("Tenant Last Name")),
-                        email=tenant_email, contact_number=clean(row.get("Tenant Contact Number")),
+                        email=tenant_email, contact_number=normalize_phone(row.get("Tenant Contact Number")),
                         unit_id=unit_id, association_id=association_id, address=address,
                         role_id=roles[RoleCode.TENANT], is_deleted=False,
                     ))

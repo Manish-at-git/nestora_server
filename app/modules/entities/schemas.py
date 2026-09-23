@@ -48,6 +48,7 @@ class EntityResponse(BaseModel):
     entity_type_id: str | None = None
     entity_type_name: str | None = None
     association_id: str | None = None
+    is_onboarded: bool = False
     name: str
     description: str | None = None
     created_at: datetime | None = None

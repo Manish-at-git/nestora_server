@@ -3,6 +3,7 @@
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.associations.models import Association
 from app.modules.entities.models import Entity
 
 
@@ -12,14 +13,26 @@ class EntityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self) -> list[Entity]:
-        """Return active entities newest first with their entity type loaded."""
+    async def list(self) -> list[tuple[Entity, bool]]:
+        """Return active entities with their derived onboarding status."""
         statement: Select[tuple[Entity]] = (
             select(Entity)
             .where(Entity.is_deleted.is_(False))
             .order_by(Entity.created_at.desc())
         )
-        return list((await self.session.scalars(statement)).all())
+        entities = list((await self.session.scalars(statement)).all())
+        onboarded_entity_ids = set(
+            await self.session.scalars(
+                select(Association.entity_id).where(
+                    Association.entity_id.is_not(None),
+                    Association.is_deleted.is_(False),
+                )
+            )
+        )
+        return [
+            (entity, bool(entity.association_id or entity.id in onboarded_entity_ids))
+            for entity in entities
+        ]
 
     async def get(self, entity_id: str) -> Entity | None:
         """Load one active entity by its stable identifier."""
