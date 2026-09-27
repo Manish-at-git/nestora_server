@@ -28,6 +28,8 @@ from app.modules.polls.router import router as polls_router
 from app.modules.board_members.router import router as board_members_router
 from app.modules.committees.router import router as committees_router
 from app.modules.employees.router import router as employees_router
+from app.modules.email_templates.router import router as email_templates_router
+from app.modules.nearby_places.router import router as nearby_places_router
 from app.modules.entity_types.router import router as entity_types_router
 from app.modules.entities.router import router as entities_router
 from app.modules.features.router import router as features_router
@@ -109,6 +111,8 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router, prefix="/api")
     app.include_router(chart_of_accounts_router, prefix="/api")
     app.include_router(employees_router, prefix="/api")
+    app.include_router(email_templates_router, prefix="/api")
+    app.include_router(nearby_places_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
     app.include_router(vendors_router, prefix="/api")
     app.include_router(profile_router, prefix="/api")

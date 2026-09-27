@@ -22,6 +22,30 @@ class RoleCode(StrEnum):
     CSR = "csr"
 
 
+class FeatureCode(StrEnum):
+    """Stable feature identifiers shared by authorization and navigation contracts."""
+
+    EMAIL_TEMPLATES = "email_templates"
+    NEARBY_PLACES = "nearby_places"
+    CHAT_POOL = "chat_pool"
+
+
+class FeatureName(StrEnum):
+    """Stable display names used when a feature must be created by a seed."""
+
+    EMAIL_TEMPLATES = "Email Templates"
+    NEARBY_PLACES = "Nearby Places"
+    CHAT_POOL = "Chat Pool"
+
+
+class FeatureRoute(StrEnum):
+    """Stable client routes used by seeded feature catalogue records."""
+
+    EMAIL_TEMPLATES = "/email-templates"
+    NEARBY_PLACES = "/nearby-places"
+    CHAT_POOL = "/chat"
+
+
 class AccountStatus(StrEnum):
     """Permitted account states used by authentication and future account administration."""
 

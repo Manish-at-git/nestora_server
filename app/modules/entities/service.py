@@ -32,7 +32,7 @@ class EntityService:
         entity = Entity(
             id=str(uuid.uuid4()),
             entity_type_id=payload.entity_type_id,
-            association_id=payload.association_id,
+            association_code=payload.association_code,
             name=payload.name,
             description=payload.description,
         )
@@ -60,7 +60,7 @@ class EntityService:
             )
 
         entity.entity_type_id = payload.entity_type_id
-        entity.association_id = payload.association_id
+        entity.association_code = payload.association_code
         entity.name = payload.name
         entity.description = payload.description
         await self.repository.session.flush()

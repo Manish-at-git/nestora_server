@@ -351,7 +351,7 @@ async def request_password_reset_otp(
     email_result = None
     if delivery is not None:
         email_result = await PasswordResetNotifier(settings).send_otp(
-            delivery.email, delivery.token, delivery.user_name
+            delivery.email, delivery.token, delivery.user_name, session
         )
     else:
         logger.warning("[PASSWORD RESET EMAIL NOT ATTEMPTED] reason=account_not_found_or_inactive")

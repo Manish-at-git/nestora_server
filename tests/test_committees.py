@@ -85,6 +85,34 @@ def test_chat_message_requires_non_blank_text() -> None:
         CommitteeChatMessageRequest(message="  ")
 
 
+async def test_board_members_can_access_their_association_board_pool() -> None:
+    service = CommitteeService(AsyncMock())
+    account = SimpleNamespace(id="board-account", user_id="board-user", role_id="board-role")
+    service.repository.association_exists = AsyncMock(return_value=True)
+    service.repository.is_active_board_member = AsyncMock(return_value=True)
+
+    await service._require_chat_access("board", "association-1", "association-1", account)
+
+    service.repository.is_active_board_member.assert_awaited_once_with("board-account", "association-1")
+
+
+async def test_committee_pool_rejects_non_members_who_are_not_board_members() -> None:
+    service = CommitteeService(AsyncMock())
+    account = SimpleNamespace(id="account-1", user_id="user-1", role_id="committee-role")
+    service.repository.association_exists = AsyncMock(return_value=True)
+    service.repository.is_active_board_member = AsyncMock(return_value=False)
+    service.repository.committee_model = AsyncMock(
+        return_value=SimpleNamespace(id="committee-1", association_id="association-1")
+    )
+    service.repository.is_active_committee_member = AsyncMock(return_value=False)
+
+    with pytest.raises(HTTPException) as error:
+        await service._require_chat_access("committee", "committee-1", "association-1", account)
+
+    assert error.value.status_code == 403
+    service.repository.is_active_committee_member.assert_awaited_once_with("user-1", "committee-1")
+
+
 def test_committee_legacy_routes_are_registered(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEBUG", "false")
     from app.main import app
@@ -105,6 +133,7 @@ def test_committee_legacy_routes_are_registered(monkeypatch: pytest.MonkeyPatch)
         ("DELETE", "/api/admin/committee-members/{member_id}"),
         ("GET", "/api/associations/{association_id}/committee-members"),
         ("GET", "/api/user/committees"),
+        ("GET", "/api/chat-pools"),
         ("GET", "/api/board_chat/{pool_type}/{pool_id}"),
         ("POST", "/api/board_chat/{pool_type}/{pool_id}"),
     }

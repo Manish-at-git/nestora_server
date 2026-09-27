@@ -9,11 +9,11 @@ class EntityRequest(BaseModel):
     """Fields accepted when creating or updating an entity."""
 
     entity_type_id: str = Field(min_length=1, max_length=36)
-    association_id: str | None = Field(default=None, max_length=100)
+    association_code: str | None = Field(default=None, max_length=100)
     name: str = Field(min_length=1, max_length=150)
     description: str | None = Field(default=None, max_length=65535)
 
-    @field_validator("entity_type_id", "association_id", "name", "description")
+    @field_validator("entity_type_id", "association_code", "name", "description")
     @classmethod
     def normalize_text(cls, value: str | None) -> str | None:
         """Trim user-entered identifiers and text while preserving optional NULL values."""
@@ -47,7 +47,7 @@ class EntityResponse(BaseModel):
     id: str
     entity_type_id: str | None = None
     entity_type_name: str | None = None
-    association_id: str | None = None
+    association_code: str | None = None
     is_onboarded: bool = False
     name: str
     description: str | None = None

@@ -6,9 +6,10 @@ from collections.abc import Iterable
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import AccountStatus, RoleCode
+from app.core.constants import AccountStatus, FeatureCode, RoleCode
 from app.modules.auth.models import Account
 from app.modules.committees.models import BoardCommitteeChatMessage, Committee, CommitteeMember
+from app.modules.iam.models import Feature, RoleFeaturePermission
 
 
 class CommitteeRepository:
@@ -189,6 +190,80 @@ class CommitteeRepository:
         )
         return [dict(row) for row in result.mappings().all()]
 
+    async def has_chat_permission(self, account: Account, permission_name: str) -> bool:
+        permission_column = {
+            "view": RoleFeaturePermission.can_view,
+            "create": RoleFeaturePermission.can_create,
+        }.get(permission_name)
+        if permission_column is None:
+            raise ValueError(f"Unsupported chat permission '{permission_name}'")
+        return bool(
+            await self.session.scalar(
+                select(RoleFeaturePermission.id)
+                .join(Feature, Feature.id == RoleFeaturePermission.feature_id)
+                .where(
+                    RoleFeaturePermission.role_id == account.role_id,
+                    RoleFeaturePermission.is_deleted.is_(False),
+                    permission_column.is_(True),
+                    Feature.code == FeatureCode.CHAT_POOL,
+                    Feature.is_active.is_(True),
+                    Feature.is_deleted.is_(False),
+                )
+                .limit(1)
+            )
+        )
+
+    async def board_association_ids(self, account_id: str) -> list[str]:
+        result = await self.session.scalars(
+            text(
+                "SELECT association_id FROM board_members "
+                "WHERE account_id = :account_id AND status = 'active' AND is_deleted = 0"
+            ),
+            {"account_id": account_id},
+        )
+        return list(result.all())
+
+    async def is_active_board_member(self, account_id: str, association_id: str) -> bool:
+        return association_id in await self.board_association_ids(account_id)
+
+    async def is_active_committee_member(self, user_id: str | None, committee_id: str) -> bool:
+        if not user_id:
+            return False
+        return bool(
+            await self.session.scalar(
+                text(
+                    "SELECT id FROM committee_members WHERE committee_id = :committee_id "
+                    "AND user_id = :user_id AND is_deleted = 0 LIMIT 1"
+                ),
+                {"committee_id": committee_id, "user_id": user_id},
+            )
+        )
+
+    async def chat_pools(self, account: Account) -> list[dict]:
+        board_association_ids = await self.board_association_ids(account.id)
+        own_committees = await self.user_committees(account.user_id) if account.user_id else []
+        board_committees = await self.list_committees(board_association_ids) if board_association_ids else []
+        committees = {row["id"]: row for row in [*own_committees, *board_committees]}
+        pools = [
+            {
+                "pool_type": "board",
+                "pool_id": association_id,
+                "association_id": association_id,
+                "name": "Board Members",
+            }
+            for association_id in board_association_ids
+        ]
+        pools.extend(
+            {
+                "pool_type": "committee",
+                "pool_id": committee["id"],
+                "association_id": committee["association_id"],
+                "name": committee["name"],
+            }
+            for committee in committees.values()
+        )
+        return pools
+
     async def chat_messages(self, pool_type: str, pool_id: str, association_id: str, account_id: str) -> list[dict]:
         result = await self.session.execute(
             text(
@@ -223,38 +298,25 @@ class CommitteeRepository:
         return dict(row) if row else None
 
     async def chat_participants(self, pool_type: str, pool_id: str, association_id: str) -> set[str]:
-        result = await self.session.scalars(
+        board_accounts = await self.session.scalars(
             text(
-                "SELECT DISTINCT ac.account_id FROM accounts ac JOIN roles r ON r.id = ac.role_id "
-                "JOIN user_details ud ON ud.user_id = ac.user_id "
-                "LEFT JOIN units u ON u.id = ud.unit_id LEFT JOIN blocks b ON b.id = u.block_id "
-                "WHERE ac.status = :account_status AND r.is_active = 1 AND r.is_deleted = 0 "
-                "AND ud.is_deleted = 0 AND COALESCE(ud.association_id, b.association_id) = :association_id "
-                "AND r.code IN :role_codes"
-                + (" AND EXISTS (SELECT 1 FROM committee_members cm WHERE cm.user_id = ac.user_id AND cm.committee_id = :pool_id AND cm.is_deleted = 0)" if pool_type == "committee" else "")
-            ).bindparams(bindparam("role_codes", expanding=True)),
-            {
-                "account_status": AccountStatus.ACTIVE,
-                "association_id": association_id,
-                "role_codes": (RoleCode.ADMIN, RoleCode.BOARD_MEMBER, RoleCode.COMMITTEE_MEMBER),
-                "pool_id": pool_id,
-            },
-        )
-        ids = set(result.all())
-        admins = await self.session.scalars(
-            text("SELECT admin_id FROM admin_associations WHERE association_id = :association_id"),
-            {"association_id": association_id},
-        )
-        ids.update(admins.all())
-        super_admins = await self.session.scalars(
-            text(
-                "SELECT ac.account_id FROM accounts ac JOIN roles r ON r.id = ac.role_id "
-                "WHERE ac.status = :account_status AND r.code = :role_code "
-                "AND r.is_active = 1 AND r.is_deleted = 0"
+                "SELECT bm.account_id FROM board_members bm JOIN accounts ac ON ac.account_id = bm.account_id "
+                "WHERE bm.association_id = :association_id AND bm.status = 'active' "
+                "AND bm.is_deleted = 0 AND ac.status = :account_status"
             ),
-            {"account_status": AccountStatus.ACTIVE, "role_code": RoleCode.SUPER_ADMIN},
+            {"association_id": association_id, "account_status": AccountStatus.ACTIVE},
         )
-        ids.update(super_admins.all())
+        ids = set(board_accounts.all())
+        if pool_type == "committee":
+            committee_accounts = await self.session.scalars(
+                text(
+                    "SELECT ac.account_id FROM committee_members cm JOIN accounts ac ON ac.user_id = cm.user_id "
+                    "WHERE cm.committee_id = :pool_id AND cm.is_deleted = 0 "
+                    "AND ac.status = :account_status"
+                ),
+                {"pool_id": pool_id, "account_status": AccountStatus.ACTIVE},
+            )
+            ids.update(committee_accounts.all())
         return ids
 
     def add_chat_message(self, message: BoardCommitteeChatMessage) -> None:

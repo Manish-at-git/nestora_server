@@ -222,13 +222,19 @@ class CommitteeService:
             rows = [row for row in rows if row["association_id"] == association_id]
         return rows
 
+    async def chat_pools(self, account: Account) -> list[dict]:
+        await self._require_chat_permission(account, "view")
+        return await self.repository.chat_pools(account)
+
     async def chat_messages(self, pool_type: str, pool_id: str, association_id: str, account: Account) -> list[dict]:
+        await self._require_chat_permission(account, "view")
         await self._require_chat_access(pool_type, pool_id, association_id, account)
         return await self.repository.chat_messages(pool_type, pool_id, association_id, account.id)
 
     async def send_chat_message(
         self, pool_type: str, pool_id: str, association_id: str, payload: CommitteeChatMessageRequest, account: Account
     ) -> tuple[dict, set[str]]:
+        await self._require_chat_permission(account, "create")
         await self._require_chat_access(pool_type, pool_id, association_id, account)
         message = BoardCommitteeChatMessage(
             id=str(uuid.uuid4()),
@@ -304,13 +310,22 @@ class CommitteeService:
         if allowed is not None and association_id not in allowed:
             raise HTTPException(status.HTTP_403_FORBIDDEN, Messages.FORBIDDEN)
 
+    async def _require_chat_permission(self, account: Account, permission_name: str) -> None:
+        if not await self.repository.has_chat_permission(account, permission_name):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, Messages.FORBIDDEN)
+
     async def _require_chat_access(self, pool_type: str, pool_id: str, association_id: str, account: Account) -> None:
         if pool_type not in {"board", "committee"}:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported chat pool")
         if not await self.repository.association_exists(association_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, Messages.INVALID_ASSOCIATION)
-        await self._require_association_access(account, association_id)
-        if pool_type == "committee":
-            committee = await self.repository.committee_model(pool_id)
-            if committee is None or committee.association_id != association_id:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, Messages.NOT_FOUND)
+        is_board_member = await self.repository.is_active_board_member(account.id, association_id)
+        if pool_type == "board":
+            if not is_board_member or pool_id != association_id:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, Messages.FORBIDDEN)
+            return
+        committee = await self.repository.committee_model(pool_id)
+        if committee is None or committee.association_id != association_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, Messages.NOT_FOUND)
+        if not is_board_member and not await self.repository.is_active_committee_member(account.user_id, pool_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, Messages.FORBIDDEN)

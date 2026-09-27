@@ -127,6 +127,13 @@ class MutationResponse(BaseModel):
     updated: bool = True
 
 
+class ChatPoolResponse(BaseModel):
+    pool_type: str
+    pool_id: str
+    association_id: str
+    name: str
+
+
 class CommitteeChatMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
     attachment_url: str | None = None

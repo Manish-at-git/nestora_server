@@ -29,10 +29,10 @@ def serialize_entity(entity, is_onboarded: bool | None = None) -> EntityResponse
         id=entity.id,
         entity_type_id=entity.entity_type_id,
         entity_type_name=entity.entity_type.name if entity.entity_type else None,
-        association_id=entity.association_id,
+        association_code=entity.association_code,
         name=entity.name,
         description=entity.description,
-        is_onboarded=(entity.association_id is not None if is_onboarded is None else is_onboarded),
+        is_onboarded=(False if is_onboarded is None else is_onboarded),
         created_at=entity.created_at,
     )
 

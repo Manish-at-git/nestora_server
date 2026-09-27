@@ -18,6 +18,7 @@ from app.modules.committees.schemas import (
     CommitteeMemberUpdateRequest,
     CommitteeResponse,
     CommitteeUpdateRequest,
+    ChatPoolResponse,
     CommitteeChatMessageRequest,
     CommitteeChatMessageResponse,
     HomeownerResponse,
@@ -127,6 +128,15 @@ async def user_committees(
     return success_response(await CommitteeService(session).user_committees(context.account, assoc_id))
 
 
+@router.get("/chat-pools", response_model=ApiResponse[list[ChatPoolResponse]])
+async def list_chat_pools(
+    context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    rows = await CommitteeService(session).chat_pools(context.account)
+    return success_response([ChatPoolResponse(**row) for row in rows])
+
+
 @router.get("/board_chat/{pool_type}/{pool_id}", response_model=ApiResponse[list[CommitteeChatMessageResponse]])
 async def list_committee_chat(
     pool_type: str,
@@ -161,7 +171,7 @@ async def send_committee_chat(
             notification_type="committee_chat",
             entity_type=pool_type,
             entity_id=pool_id,
-            action_url="/committees",
+            action_url=f"/chat/{pool_type}/{pool_id}",
         )
     await manager.send_to_accounts(
         recipients,

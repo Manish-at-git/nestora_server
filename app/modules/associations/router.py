@@ -8,8 +8,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile,
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.core.constants import RoleCode
-from app.core.dependencies import AuthContext, get_auth_context, require_csrf, require_role
+from app.core.dependencies import AuthContext, get_app_settings, get_auth_context, require_csrf, require_role
 from app.core.email import email_service
 from app.core.email_templates import sample_email_templates, registration_code_email
 from app.core.responses import ApiResponse, success_response
@@ -26,27 +27,44 @@ from app.modules.associations.schemas import (
     AssociationOnboardResponse,
 )
 from app.modules.associations.service import AssociationService
+from app.modules.email_templates.constants import EmailTemplateEventType
+from app.modules.email_templates.service import EmailTemplateService
 
 
 router = APIRouter(prefix="/admin/associations", tags=["Associations"])
 logger = logging.getLogger("nestora.server.associations")
 
 
-async def _send_registration_emails(deliveries: list[dict[str, str]]) -> None:
+async def _send_registration_emails(
+    deliveries: list[dict[str, str]],
+    template: tuple[str, str] | None = None,
+) -> None:
     """Attempt onboarding emails after the response; delivery must not affect onboarding."""
 
     async def send_registration_email(delivery: dict[str, str]) -> dict:
-        rendered = registration_code_email(
-            name=delivery["name"],
-            registration_code=delivery["registration_code"],
-            association_name=delivery["association_name"],
-        )
+        context = {
+            "homeowner_name": delivery["name"],
+            "registration_code": delivery["registration_code"],
+            "association_name": delivery["association_name"],
+            "email": delivery["email"],
+        }
+        if template is None:
+            rendered = registration_code_email(
+                name=delivery["name"],
+                registration_code=delivery["registration_code"],
+                association_name=delivery["association_name"],
+            )
+            subject, html_content, text_content = rendered.subject, rendered.html, rendered.text
+        else:
+            subject = EmailTemplateService.render(template[0], context)
+            html_content = EmailTemplateService.render(template[1], context)
+            text_content = None
         return await email_service.send_email(
             to_email=delivery["email"],
             to_name=delivery["name"],
-            subject=rendered.subject,
-            html_content=rendered.html,
-            text_content=rendered.text,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
         )
 
     results = await asyncio.gather(
@@ -163,6 +181,7 @@ async def onboard_association(
     csv_file: UploadFile = File(...),
     _: object = Depends(require_csrf),
     session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_app_settings),
 ) -> dict:
     workbook_bytes = await csv_file.read()
     contract_url = None
@@ -173,8 +192,21 @@ async def onboard_association(
     async with UnitOfWork(session):
         result = await service.onboard(workbook_bytes, entity_id, plan_id, contract_url)
 
-    if service.registration_deliveries:
-        background_tasks.add_task(_send_registration_emails, list(service.registration_deliveries))
+    if settings.send_onboarding_emails and service.registration_deliveries:
+        template_content = None
+        try:
+            onboarding_template = await EmailTemplateService(session).get_active_by_event_type(
+                EmailTemplateEventType.WELCOME_HOMEOWNER
+            )
+            if onboarding_template is not None:
+                template_content = (onboarding_template.subject, onboarding_template.body)
+        except Exception as error:
+            logger.warning("Onboarding master template lookup failed; using fallback: %s", error)
+        background_tasks.add_task(
+            _send_registration_emails,
+            list(service.registration_deliveries),
+            template_content,
+        )
     return success_response(result, "Association onboarded successfully")
 
 

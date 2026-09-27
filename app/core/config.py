@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     brevo_api_key: str | None = None
     brevo_sender_email: str | None = None
     brevo_sender_name: str = "Nestora"
+    # Opt-in: onboarding imports create accounts but do not send registration emails
+    # unless this flag is explicitly enabled.
+    send_onboarding_emails: bool = False
 
     # SMTP is optional in development, but production password reset delivery
     # requires all of these values to be configured.

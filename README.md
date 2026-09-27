@@ -36,15 +36,26 @@ never connects to the legacy database at runtime.
 5. Create a new empty MySQL database: `python -m scripts.create_database`.
 6. Create its tables: `python -m alembic upgrade head`.
 7. Seed country, region, district, and city reference data:
-   `python -m scripts.seed_locations`.
+   `python -m scripts.seeds.seed_locations`.
 8. Seed the saved roles, features, role-feature permissions, and bootstrap administrator:
-   `python -m scripts.seed_auth`.
-9. Run the API through the installed environment: `python -m uvicorn app.main:app --reload`.
+   `python -m scripts.seeds.seed_auth`.
+9. Optional for local or test environments: seed the entity-type catalogue and
+   sample, un-onboarded association leads: `python -m scripts.seeds.seed_entities`.
+   This is not required for production and is never run automatically. It
+   inserts or updates only the reference records and does not delete
+   operator-created entities.
+10. Optional for local or test environments: seed the editable onboarding
+    welcome and password-reset OTP templates: `python -m scripts.seeds.seed_email_templates`.
+    The seed reads the server-owned HTML files in
+    `app/modules/email_templates/templates`. Existing administrator-edited
+    templates are preserved; only missing templates are created and
+    soft-deleted defaults are restored.
+11. Run the API through the installed environment: `python -m uvicorn app.main:app --reload`.
 
 The commands above are intentionally manual. They can create or alter the
 database, so do not run them against the legacy Nestora database.
 
-`scripts.seed_locations` verifies the checksum of its pinned India state and
+`scripts.seeds.seed_locations` verifies the checksum of its pinned India state and
 district source before inserting data. For an offline run, provide that exact
 JSON snapshot explicitly with `--india-data-file /path/to/india.json`.
 

@@ -9,7 +9,7 @@ from urllib.request import urlopen
 
 from app.db.session import close_database, session_factory
 from app.location_data.locations import INDIA_DATASET_SHA256, INDIA_DATASET_URL
-from app.location_seed import seed_locations, validate_india_dataset
+from app.seed_data.locations import seed_locations, validate_india_dataset
 
 
 def load_india_dataset(source_file: str | None) -> list[dict]:

@@ -16,6 +16,8 @@ from app.modules.marketplace import models as marketplace_models  # noqa: F401 -
 from app.modules.visitor_management import models as visitor_management_models  # noqa: F401 - registers mapped tables
 from app.modules.wallet import models as wallet_models  # noqa: F401 - registers mapped tables
 from app.modules.locations import models as location_models  # noqa: F401 - registers mapped tables
+from app.modules.email_templates import models as email_template_models  # noqa: F401 - registers mapped tables
+from app.modules.nearby_places import models as nearby_place_models  # noqa: F401 - registers mapped tables
 
 config = context.config
 if config.config_file_name is not None:

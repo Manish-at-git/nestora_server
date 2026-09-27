@@ -30,7 +30,7 @@ class EntityRepository:
             )
         )
         return [
-            (entity, bool(entity.association_id or entity.id in onboarded_entity_ids))
+            (entity, entity.id in onboarded_entity_ids)
             for entity in entities
         ]
 
