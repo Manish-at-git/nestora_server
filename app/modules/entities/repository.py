@@ -4,6 +4,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.associations.models import Association
+from app.modules.associations.models import Association
 from app.modules.entities.models import Entity
 
 
@@ -13,6 +14,8 @@ class EntityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def list(self) -> list[tuple[Entity, bool]]:
+        """Return active entities with their derived onboarding status."""
     async def list(self) -> list[tuple[Entity, bool]]:
         """Return active entities with their derived onboarding status."""
         statement: Select[tuple[Entity]] = (

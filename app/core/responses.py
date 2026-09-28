@@ -22,6 +22,19 @@ def success_response(data: T | None = None, message: str = "Success") -> dict[st
     return jsonable_encoder(ApiResponse[T](success=True, message=message, data=data).model_dump())
 
 
-def error_response(message: str, data: Any | None = None) -> dict[str, Any]:
-    """Create JSON-safe error payloads using the same shape as success responses."""
-    return jsonable_encoder(ApiResponse[Any](success=False, message=message, data=data).model_dump())
+def error_response(
+    message: str,
+    data: Any | None = None,
+    *,
+    debug: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a safe error envelope, optionally adding development diagnostics.
+
+    ``debug`` is deliberately absent when it is not supplied. This keeps
+    production responses free of implementation details while preserving the
+    established ``success``, ``message``, ``data``, and ``meta`` fields.
+    """
+    response = ApiResponse[Any](success=False, message=message, data=data).model_dump()
+    if debug is not None:
+        response["debug"] = debug
+    return jsonable_encoder(response)
