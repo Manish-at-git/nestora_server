@@ -119,6 +119,7 @@ async def download_excel_template() -> StreamingResponse:
             "Last Name",
             "Email",
             "Phone Number",
+            "Primary Homeowner",
             "Rented",
             "Tenant First Name",
             "Tenant Last Name",

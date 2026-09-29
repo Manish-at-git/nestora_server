@@ -52,29 +52,88 @@ class AssociationService:
 
         values = list(workbook["Unit Details"].values)
         if not values:
-            return {"num_blocks": 0, "floors_per_block": 0, "units_per_floor": 0}
+            return {"blocks": [], "total_units": 0}
         headers = [str(value).strip() if value is not None else "" for value in values[0]]
 
         def clean(value: object) -> str:
             return "" if value is None else str(value).strip()
 
-        floors_by_block: dict[str, set[str]] = {}
-        units_by_floor: dict[tuple[str, str], set[str]] = {}
+        floors_by_block: dict[str, dict[str, set[str]]] = {}
         for row_values in values[1:]:
             if not any(value is not None for value in row_values):
                 continue
             row = dict(zip(headers, row_values))
             block, floor, unit = clean(row.get("Block Name")), clean(row.get("Floor")), clean(row.get("Unit Number"))
-            if not block or not unit:
-                continue
-            floors_by_block.setdefault(block, set()).add(floor)
-            units_by_floor.setdefault((block, floor), set()).add(unit)
+            if block and unit:
+                floors_by_block.setdefault(block, {}).setdefault(floor, set()).add(unit)
 
         return {
-            "num_blocks": len(floors_by_block),
-            "floors_per_block": max((len(floors) for floors in floors_by_block.values()), default=0),
-            "units_per_floor": max((len(units) for units in units_by_floor.values()), default=0),
+            "blocks": [
+                {"name": block_name, "floors": [{"name": floor_name, "unit_count": len(units)} for floor_name, units in floors.items()], "unit_count": sum(len(units) for units in floors.values())}
+                for block_name, floors in floors_by_block.items()
+            ],
+            "total_units": sum(len(units) for floors in floors_by_block.values() for units in floors.values()),
         }
+
+    @staticmethod
+    def _validate_unit_structure(entity_type_name: str | None, unit_rows: list[dict]) -> None:
+        """Require floorless unit rows for Townhouse and Single Family entities."""
+        if (entity_type_name or "").strip().casefold() == "condominium":
+            return
+        for row in unit_rows:
+            floor = "" if row.get("Floor") is None else str(row.get("Floor")).strip()
+            if floor:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, AssociationMessage.FLOORS_NOT_ALLOWED)
+
+    @staticmethod
+    def _validate_primary_homeowners(
+        homeowner_headers: set[str], homeowner_rows: list[dict], unit_rows: list[dict]
+    ) -> None:
+        """Require one email-enabled primary homeowner for every imported unit."""
+        primary_column = "Primary Homeowner"
+        if primary_column not in homeowner_headers:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                AssociationMessage.PRIMARY_HOMEOWNER_COLUMN_REQUIRED,
+            )
+
+        def clean(value: object) -> str:
+            return "" if value is None else str(value).strip()
+
+        unit_keys = {
+            (clean(row.get("Block Name")), clean(row.get("Unit Number")))
+            for row in unit_rows
+            if clean(row.get("Block Name")) and clean(row.get("Unit Number"))
+        }
+        primary_counts = dict.fromkeys(unit_keys, 0)
+        for row in homeowner_rows:
+            block_name = clean(row.get("Block Name"))
+            unit_number = clean(row.get("Unit Number"))
+            key = (block_name, unit_number)
+            if key not in unit_keys:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{AssociationMessage.INVALID_UNIT_REFERENCE}: {block_name}/{unit_number}",
+                )
+            primary_value = clean(row.get(primary_column)).casefold()
+            if primary_value not in {"yes", "no"}:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    AssociationMessage.PRIMARY_HOMEOWNER_INVALID,
+                )
+            if primary_value == "yes":
+                if not normalize_email(row.get("Email")):
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        AssociationMessage.PRIMARY_HOMEOWNER_EMAIL_REQUIRED,
+                    )
+                primary_counts[key] += 1
+
+        if any(count != 1 for count in primary_counts.values()):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                AssociationMessage.PRIMARY_HOMEOWNER_PER_UNIT_REQUIRED,
+            )
 
     async def list(self, account_id: str, role_code: str):
         associations = await self.repository.list(account_id, role_code)
@@ -279,7 +338,19 @@ class AssociationService:
                 return ""
             return str(value).strip()
 
+        unit_rows = rows("Unit Details")
         homeowner_rows = rows("Homeowner Details")
+        homeowner_header_rows = list(workbook["Homeowner Details"].iter_rows(max_row=1, values_only=True))
+        homeowner_headers = {
+            str(value).strip()
+            for value in (homeowner_header_rows[0] if homeowner_header_rows else ())
+            if value is not None
+        }
+        self._validate_unit_structure(
+            entity.entity_type.name if entity.entity_type else None,
+            unit_rows,
+        )
+        self._validate_primary_homeowners(homeowner_headers, homeowner_rows, unit_rows)
         tenant_rows = [
             (row_number, row)
             for row_number, row in enumerate(homeowner_rows, start=2)
@@ -334,7 +405,7 @@ class AssociationService:
 
         unit_map: dict[tuple[str, str], str] = {}
         units_created = 0
-        for row in rows("Unit Details"):
+        for row in unit_rows:
             block_name, unit_number = clean(row.get("Block Name")), clean(row.get("Unit Number"))
             if not block_name or not unit_number:
                 continue
@@ -374,7 +445,7 @@ class AssociationService:
                 address=address, role_id=roles[RoleCode.HOMEOWNER], is_deleted=False,
             )
             self.repository.session.add(homeowner)
-            if homeowner.email:
+            if clean(row.get("Primary Homeowner")).casefold() == "yes":
                 self.registration_deliveries.append(
                     {
                         "email": homeowner.email.lower(),
