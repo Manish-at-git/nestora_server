@@ -1,9 +1,11 @@
 """HTTP routes for event publishing, RSVP, likes, and comments."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import AuthContext, get_auth_context, require_csrf
+from app.core.config import get_settings
+from app.core.constants import RoleCode
+from app.core.dependencies import AuthContext, get_auth_context, require_csrf, require_role
 from app.core.responses import ApiResponse, success_response
 from app.db.session import get_db_session
 from app.db.unit_of_work import UnitOfWork
@@ -14,9 +16,65 @@ from app.modules.events.schemas import (
     EventResponse, EventRSVPResponse, RSVPRequest,
 )
 from app.modules.events.service import EventService
+from app.modules.events.pass_service import EventPassService
+from app.modules.events.schemas import (
+    EventPassBookingRequest, EventPassShareRequest, EventPassScanRequest,
+    EventPassCheckInRequest,
+)
+from app.modules.auth.service import AuthService
 from app.modules.notifications.service import publish_pending_notifications
 
 router = APIRouter(tags=["Events"])
+
+
+@router.post("/events/{event_id}/book-pass", response_model=ApiResponse[dict])
+async def book_event_pass(event_id: str, payload: EventPassBookingRequest, context: AuthContext = Depends(require_csrf), session: AsyncSession = Depends(get_db_session)) -> dict:
+    async with UnitOfWork(session):
+        result = await EventPassService(session).book(event_id, payload, context.account)
+    return success_response(result)
+
+
+@router.get("/events/{event_id}/my-pass", response_model=ApiResponse[list[dict]])
+async def my_event_passes(event_id: str, context: AuthContext = Depends(get_auth_context), session: AsyncSession = Depends(get_db_session)) -> dict:
+    return success_response(await EventPassService(session).my_passes(event_id, context.account))
+
+
+@router.get("/events/passes/{pass_id}", response_model=ApiResponse[dict])
+async def event_pass_detail(pass_id: str, request: Request, session: AsyncSession = Depends(get_db_session)) -> dict:
+    settings = get_settings()
+    token = request.cookies.get(settings.session_cookie_name)
+    account = None
+    if token:
+        try:
+            auth_session = await AuthService(session, settings).get_authenticated_session(token)
+            account = auth_session.account
+        except HTTPException:
+            pass
+    return success_response(await EventPassService(session).detail(pass_id, account))
+
+
+@router.post("/events/passes/{pass_id}/share", response_model=ApiResponse[dict])
+async def share_event_pass(pass_id: str, payload: EventPassShareRequest, context: AuthContext = Depends(require_csrf), session: AsyncSession = Depends(get_db_session)) -> dict:
+    async with UnitOfWork(session):
+        result = await EventPassService(session).share(pass_id, payload, context.account)
+    return success_response(result)
+
+
+@router.get("/admin/events/{event_id}/passes", response_model=ApiResponse[dict])
+async def admin_event_passes(event_id: str, context: AuthContext = Depends(require_role(RoleCode.ADMIN, RoleCode.SUPER_ADMIN, RoleCode.BOARD_MEMBER)), session: AsyncSession = Depends(get_db_session)) -> dict:
+    return success_response(await EventPassService(session).admin_list(event_id, context.account))
+
+
+@router.post("/admin/events/{event_id}/passes/verify-scan", response_model=ApiResponse[dict])
+async def verify_event_pass(event_id: str, payload: EventPassScanRequest, context: AuthContext = Depends(require_csrf), session: AsyncSession = Depends(get_db_session)) -> dict:
+    return success_response(await EventPassService(session).verify(event_id, payload.query, context.account))
+
+
+@router.post("/admin/events/{event_id}/passes/{pass_id}/check-in", response_model=ApiResponse[dict])
+async def check_in_event_pass(event_id: str, pass_id: str, payload: EventPassCheckInRequest, context: AuthContext = Depends(require_csrf), session: AsyncSession = Depends(get_db_session)) -> dict:
+    async with UnitOfWork(session):
+        result = await EventPassService(session).check_in(event_id, pass_id, payload, context.account)
+    return success_response(result)
 
 
 @router.get("/events", response_model=EventListResponse)

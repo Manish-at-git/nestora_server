@@ -1,0 +1,11 @@
+"""User-facing visitor-management API messages."""
+
+RESIDENT_ACCESS_REQUIRED = "Resident visitor access is required"
+SECURITY_ACCESS_REQUIRED = "Security visitor access is required"
+VISITOR_PASS_NOT_FOUND = "Visitor pass not found"
+VISITOR_PASS_INVALID = "Visitor pass is not valid for check-in"
+VISITOR_PASS_OUTSIDE_WINDOW = "Visitor pass is outside its scheduled visit window"
+VISITOR_PASS_OTP_INVALID = "The visitor OTP is incorrect"
+VISITOR_ALREADY_INSIDE = "This visitor is already checked in"
+ACTIVE_VISIT_NOT_FOUND = "Active visitor entry not found"
+VISIT_NOT_FOUND = "Visitor request not found or already processed"

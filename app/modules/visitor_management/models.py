@@ -23,10 +23,14 @@ class Visitor(Base):
     emergency_contact: Mapped[str | None] = mapped_column(String(30))
     police_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     id_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    status: Mapped[str | None] = mapped_column(String(30), default="Active", server_default="Active")
+    status: Mapped[str | None] = mapped_column(
+        String(30), default="Active", server_default="Active"
+    )
     pass_expiry_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class VisitorVisit(Base):
@@ -46,7 +50,9 @@ class VisitorVisit(Base):
     check_in_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     check_out_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class PreApprovedVisitor(Base):
@@ -66,11 +72,15 @@ class PreApprovedVisitor(Base):
     number_of_visitors: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     vehicle_number: Mapped[str | None] = mapped_column(String(50))
     purpose: Mapped[str | None] = mapped_column(String(255))
-    pass_type: Mapped[str | None] = mapped_column(String(50), default="Single Entry", server_default="Single Entry")
+    pass_type: Mapped[str | None] = mapped_column(
+        String(50), default="Single Entry", server_default="Single Entry"
+    )
     status: Mapped[str] = mapped_column(String(30), default="Active", server_default="Active")
     created_by: Mapped[str | None] = mapped_column(CHAR(36))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class VisitorLog(Base):
@@ -84,7 +94,9 @@ class VisitorLog(Base):
     guard_id: Mapped[str | None] = mapped_column(CHAR(36))
     visitor_photo_url: Mapped[str | None] = mapped_column(String(255))
     remarks: Mapped[str | None] = mapped_column(Text)
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class Delivery(Base):
@@ -104,7 +116,9 @@ class Delivery(Base):
     check_in: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     check_out: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
 
 class Vehicle(Base):
@@ -117,4 +131,6 @@ class Vehicle(Base):
     insurance_url: Mapped[str | None] = mapped_column(String(255))
     puc_url: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )

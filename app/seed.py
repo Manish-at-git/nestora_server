@@ -29,6 +29,10 @@ from app.modules.entities.models import Entity
 from app.modules.employees.models import Employee
 from app.modules.marketplace.models import MarketplaceCategory
 from app.modules.visitor_management.models import Delivery, PreApprovedVisitor, Visitor, VisitorLog, VisitorVisit
+from app.modules.visitor_management.constants import (
+    RESIDENT_VISITOR_ROLES,
+    SECURITY_VISITOR_ROLES,
+)
 from app.modules.wallet.models import Wallet, WalletTransaction
 from app.modules.iam.models import Feature, Role, RoleFeaturePermission
 from app.modules.meetings.models import Meeting
@@ -47,6 +51,25 @@ WELCOME_NOTIFICATION_ID = "5d8fd65f-25e1-4d57-932b-696b5db13e7d"
 EMAIL_TEMPLATES_FEATURE_ID = "e27a28bc-a3de-4e8d-8b83-65835caa33c2"
 NEARBY_PLACES_FEATURE_ID = "4ac15eef-1fad-41d1-8c68-4d5a5aaf2026"
 CHAT_POOL_FEATURE_ID = "626f8a3e-1782-46f9-9a0c-d23a1e7ed1af"
+VISITOR_MANAGEMENT_FEATURE_ID = "50000000-0000-4000-8000-000000000001"
+GATE_CONSOLE_FEATURE_ID = "50000000-0000-4000-8000-000000000003"
+PRE_APPROVED_VISITORS_FEATURE_ID = "50000000-0000-4000-8000-000000000004"
+VISITOR_HISTORY_FEATURE_ID = "50000000-0000-4000-8000-000000000006"
+
+# The shared Pre-Approved Visitors feature renders a resident management
+# workflow or a security verification workflow based on the authenticated role.
+RESIDENT_VISITOR_PERMISSION_MATRIX = {
+    FeatureCode.VISITOR_MANAGEMENT: (True, False, False, False),
+    FeatureCode.PRE_APPROVED_VISITORS: (True, True, True, True),
+    FeatureCode.VISITOR_HISTORY: (True, False, False, False),
+}
+
+SECURITY_VISITOR_PERMISSION_MATRIX = {
+    FeatureCode.VISITOR_MANAGEMENT: (True, False, False, False),
+    FeatureCode.GATE_CONSOLE: (True, True, True, False),
+    FeatureCode.PRE_APPROVED_VISITORS: (True, False, True, False),
+    FeatureCode.VISITOR_HISTORY: (True, False, False, False),
+}
 
 
 async def _seed_roles(session: AsyncSession, rows: list[dict]) -> None:
@@ -803,6 +826,7 @@ async def seed_auth_data(session: AsyncSession, settings: Settings) -> None:
     await _seed_email_templates_permission(session)
     await _seed_nearby_places_feature_and_permissions(session)
     await _seed_chat_pool_feature_and_permissions(session)
+    await seed_visitor_features_and_permissions(session)
     await _seed_subscription_plans(session, snapshot.get("subscription_plans", []))
     await _seed_associations(session, snapshot.get("associations", []))
     await _seed_bank_accounts(session, snapshot.get("bank_accounts", []))
@@ -950,4 +974,135 @@ async def _seed_chat_pool_feature_and_permissions(session: AsyncSession) -> None
         permission.can_delete = False
         permission.is_deleted = False
         permission.sidebar_order = 0
+    await session.flush()
+
+
+async def seed_visitor_features_and_permissions(session: AsyncSession) -> None:
+    """Seed role-specific resident and gate visitor navigation and CRUD rights."""
+    definitions = (
+        (
+            VISITOR_MANAGEMENT_FEATURE_ID,
+            FeatureCode.VISITOR_MANAGEMENT,
+            FeatureName.VISITOR_MANAGEMENT,
+            FeatureRoute.VISITOR_MANAGEMENT,
+            None,
+            "UserCheck",
+            11,
+        ),
+        (
+            GATE_CONSOLE_FEATURE_ID,
+            FeatureCode.GATE_CONSOLE,
+            FeatureName.GATE_CONSOLE,
+            FeatureRoute.GATE_CONSOLE,
+            FeatureCode.VISITOR_MANAGEMENT,
+            "Search",
+            1,
+        ),
+        (
+            PRE_APPROVED_VISITORS_FEATURE_ID,
+            FeatureCode.PRE_APPROVED_VISITORS,
+            FeatureName.PRE_APPROVED_VISITORS,
+            FeatureRoute.PRE_APPROVED_VISITORS,
+            FeatureCode.VISITOR_MANAGEMENT,
+            "Calendar",
+            2,
+        ),
+        (
+            VISITOR_HISTORY_FEATURE_ID,
+            FeatureCode.VISITOR_HISTORY,
+            FeatureName.VISITOR_HISTORY,
+            FeatureRoute.VISITOR_HISTORY,
+            FeatureCode.VISITOR_MANAGEMENT,
+            "History",
+            4,
+        ),
+    )
+    features: dict[FeatureCode, Feature] = {}
+    for feature_id, code, name, route, _parent_code, icon, order_index in definitions:
+        feature = await session.scalar(select(Feature).where(Feature.code == code))
+        if feature is None:
+            feature = Feature(id=feature_id, code=code)
+            session.add(feature)
+        feature.name = name
+        feature.description = f"{name} visitor-management capability."
+        feature.route = route
+        feature.icon = icon
+        feature.order_index = order_index
+        feature.is_system = True
+        feature.is_active = True
+        feature.is_deleted = False
+        features[code] = feature
+    await session.flush()
+
+    for _feature_id, code, _name, _route, parent_code, _icon, _order in definitions:
+        features[code].parent_id = features[parent_code].id if parent_code else None
+
+    resident_codes = set(RESIDENT_VISITOR_ROLES)
+    security_codes = set(SECURITY_VISITOR_ROLES)
+    managed_codes = resident_codes | security_codes
+    roles = list(
+        (
+            await session.scalars(
+                select(Role).where(
+                    Role.code.in_(managed_codes),
+                    Role.is_deleted.is_(False),
+                    Role.is_active.is_(True),
+                )
+            )
+        ).all()
+    )
+    for role in roles:
+        permission_matrix = (
+            RESIDENT_VISITOR_PERMISSION_MATRIX
+            if role.code in resident_codes
+            else SECURITY_VISITOR_PERMISSION_MATRIX
+        )
+        for code, feature in features.items():
+            permission = await session.scalar(
+                select(RoleFeaturePermission).where(
+                    RoleFeaturePermission.role_id == role.id,
+                    RoleFeaturePermission.feature_id == feature.id,
+                )
+            )
+            if permission is None:
+                permission = RoleFeaturePermission(
+                    id=str(uuid.uuid4()),
+                    role_id=role.id,
+                    feature_id=feature.id,
+                )
+                session.add(permission)
+            can_view, can_create, can_update, can_delete = permission_matrix.get(
+                code,
+                (False, False, False, False),
+            )
+            permission.can_view = can_view
+            permission.can_create = can_create
+            permission.can_update = can_update
+            permission.can_delete = can_delete
+            permission.sidebar_order = feature.order_index if can_view else 0
+            permission.is_deleted = False
+
+        legacy_codes = (
+            FeatureCode.LEGACY_VISITOR_PASSES,
+            FeatureCode.LEGACY_NEW_VISITOR,
+            FeatureCode.LEGACY_CHECK_IN,
+            FeatureCode.LEGACY_CHECK_OUT,
+            FeatureCode.LEGACY_ACTIVE_VISITORS,
+        )
+        legacy_features = list(
+            (await session.scalars(select(Feature).where(Feature.code.in_(legacy_codes)))).all()
+        )
+        for legacy_feature in legacy_features:
+            legacy_permission = await session.scalar(
+                select(RoleFeaturePermission).where(
+                    RoleFeaturePermission.role_id == role.id,
+                    RoleFeaturePermission.feature_id == legacy_feature.id,
+                )
+            )
+            if legacy_permission is not None:
+                legacy_permission.sidebar_order = 0
+                legacy_permission.can_view = False
+                legacy_permission.can_create = False
+                legacy_permission.can_update = False
+                legacy_permission.can_delete = False
     await session.flush()

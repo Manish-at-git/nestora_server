@@ -1,9 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.responses import ApiResponse
+from app.core.validation import is_phone_number
 from app.modules.events.constants import RSVPStatus
 
 
@@ -23,6 +25,9 @@ class EventCreateRequest(BaseModel):
     send_notifications: bool = False
     is_paid: bool = False
     fee_amount: Decimal | None = Field(default=None, ge=0)
+    has_pass: bool = False
+    pass_price: Decimal | None = Field(default=None, ge=0)
+    max_passes_per_user: int = Field(default=10, ge=1, le=50)
     organizer_name: str | None = None
     organizer_contact: str | None = None
     status: str = "Published"
@@ -35,9 +40,48 @@ class EventCreateRequest(BaseModel):
             raise ValueError("Title cannot be blank")
         return value
 
+    @model_validator(mode="after")
+    def validate_pass_settings(self) -> "EventCreateRequest":
+        if self.has_pass and not self.is_paid:
+            raise ValueError("Digital passes require a paid event.")
+        if self.has_pass and (self.pass_price or self.fee_amount or 0) <= 0:
+            raise ValueError("A digital pass must have a price greater than zero.")
+        if self.has_pass and self.pass_price is None:
+            self.pass_price = self.fee_amount
+        if not self.has_pass:
+            self.pass_price = None
+        return self
+
 
 class RSVPRequest(BaseModel):
     status: RSVPStatus
+
+
+class EventPassBookingRequest(BaseModel):
+    member_count: int = Field(default=1, ge=1, le=50)
+    payment_method: Literal["wallet", "upi"] = "wallet"
+    pin: str | None = None
+
+
+class EventPassShareRequest(BaseModel):
+    recipient_mobile: str = Field(min_length=7, max_length=20)
+    count: int = Field(default=1, ge=1)
+
+    @field_validator("recipient_mobile")
+    @classmethod
+    def validate_recipient_mobile(cls, value: str) -> str:
+        if not is_phone_number(value):
+            raise ValueError("Enter a valid mobile number with 7 to 15 digits.")
+        return value.strip()
+
+
+class EventPassScanRequest(BaseModel):
+    query: str = Field(min_length=1)
+
+
+class EventPassCheckInRequest(BaseModel):
+    admit_count: int = Field(default=1, ge=1)
+    notes: str | None = None
 
 
 class EventCommentRequest(BaseModel):
@@ -68,6 +112,10 @@ class EventResponse(BaseModel):
     audience: str | None = None
     is_paid: bool = False
     fee_amount: Decimal | None = None
+    has_pass: bool = False
+    pass_price: Decimal | None = None
+    max_passes_per_user: int = 10
+    my_pass: dict | None = None
     organizer_name: str | None = None
     organizer_contact: str | None = None
     status: str | None = None

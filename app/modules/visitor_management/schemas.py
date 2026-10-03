@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class VisitorRequest(BaseModel):
@@ -27,17 +27,33 @@ class PreApprovedVisitorRequest(BaseModel):
     visit_date: date
     start_time: time
     end_time: time
-    number_of_visitors: int = Field(default=1, ge=1, le=100)
+    number_of_visitors: int = Field(ge=1, le=100)
     vehicle_number: str | None = None
     purpose: str | None = None
     pass_type: str = Field(default="Single Entry", max_length=50)
 
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "PreApprovedVisitorRequest":
+        if datetime.combine(self.visit_date, self.start_time) <= datetime.now():
+            raise ValueError("Visit date and start time must be in the future")
+        if self.end_time <= self.start_time:
+            raise ValueError("End time must be later than start time")
+        return self
+
 
 class CheckInRequest(BaseModel):
+    otp: str | None = Field(default=None, min_length=4, max_length=10)
     gate: str | None = None
-    guard_id: str | None = None
     visitor_photo_url: str | None = None
     remarks: str | None = None
+
+
+class WalkInCheckInRequest(BaseModel):
+    gate: str | None = Field(default=None, max_length=50)
+
+
+class VisitorCheckOutRequest(BaseModel):
+    remarks: str | None = Field(default=None, max_length=500)
 
 
 class DeliveryRequest(BaseModel):
@@ -59,4 +75,3 @@ class MutationResponse(BaseModel):
     pass_code: str | None = None
     otp: str | None = None
     log_id: str | None = None
-

@@ -78,11 +78,25 @@ class EventRepository:
         attendee_map: dict[str, list[str]] = {}
         for row in attendees.mappings():
             attendee_map.setdefault(row["event_id"], []).append(row["name"])
+        pass_rows = await self.session.execute(
+            text(
+                f"SELECT id,event_id,total_passes,remaining_passes,pass_code,status "
+                f"FROM event_passes WHERE account_id=:account_id AND event_id IN ({placeholders}) "
+                "AND shared_from_pass_id IS NULL "
+                "AND status IN ('Active','Checked In') "
+                "ORDER BY remaining_passes DESC,created_at DESC"
+            ),
+            {**id_params, "account_id": account_id},
+        )
+        my_passes: dict[str, dict] = {}
+        for pass_row in pass_rows.mappings():
+            my_passes.setdefault(pass_row["event_id"], dict(pass_row))
         for row in rows:
             row["user_has_liked"] = bool(row["user_has_liked"])
             row["rsvp_counts"] = counts.get(row["id"], {"going": 0, "maybe": 0, "not_going": 0})
             row["my_rsvp_status"] = my_status.get(row["id"])
             row["attendees_preview"] = attendee_map.get(row["id"], [])[:6]
+            row["my_pass"] = my_passes.get(row["id"])
         return rows
 
     async def get(self, event_id: str) -> Event | None:

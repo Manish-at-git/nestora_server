@@ -28,6 +28,16 @@ class FeatureCode(StrEnum):
     EMAIL_TEMPLATES = "email_templates"
     NEARBY_PLACES = "nearby_places"
     CHAT_POOL = "chat_pool"
+    VISITOR_MANAGEMENT = "visitor_management"
+    # Retained only to hide the superseded feature during permission seeding.
+    LEGACY_VISITOR_PASSES = "visitor_passes"
+    LEGACY_NEW_VISITOR = "new_visitor"
+    LEGACY_CHECK_IN = "check_in"
+    LEGACY_CHECK_OUT = "check_out"
+    LEGACY_ACTIVE_VISITORS = "active_visitors"
+    GATE_CONSOLE = "gate_console"
+    PRE_APPROVED_VISITORS = "pre_approved_visitors"
+    VISITOR_HISTORY = "visitor_history"
 
 
 class FeatureName(StrEnum):
@@ -36,6 +46,10 @@ class FeatureName(StrEnum):
     EMAIL_TEMPLATES = "Email Templates"
     NEARBY_PLACES = "Nearby Places"
     CHAT_POOL = "Chat Pool"
+    VISITOR_MANAGEMENT = "Visitor Management"
+    GATE_CONSOLE = "New Visitor"
+    PRE_APPROVED_VISITORS = "Pre-Approved Visitors"
+    VISITOR_HISTORY = "Visitor History"
 
 
 class FeatureRoute(StrEnum):
@@ -44,6 +58,10 @@ class FeatureRoute(StrEnum):
     EMAIL_TEMPLATES = "/email-templates"
     NEARBY_PLACES = "/nearby-places"
     CHAT_POOL = "/chat"
+    VISITOR_MANAGEMENT = "/visitor-management"
+    GATE_CONSOLE = "/visitor-management/new"
+    PRE_APPROVED_VISITORS = "/visitor-management/preapproved"
+    VISITOR_HISTORY = "/visitor-management/history"
 
 
 class AccountStatus(StrEnum):
