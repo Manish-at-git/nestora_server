@@ -11,6 +11,7 @@ from app.core.constants import CSRF_HEADER_NAME
 from app.core.exceptions import install_exception_handlers
 from app.core.logging import configure_logging
 from app.core.realtime import router as realtime_router
+from app.core.responses import ApiResponse, success_response
 from app.core.storage.router import router as storage_router
 from app.db.session import close_database
 from app.modules.associations.router import router as associations_router
@@ -74,6 +75,11 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", CSRF_HEADER_NAME, "X-Request-ID"],
     )
+
+    @app.get("/", response_model=ApiResponse[dict[str, str]], tags=["Health"])
+    async def root() -> dict:
+        """Provide a public browser-friendly confirmation that this server is running."""
+        return success_response({"status": "running"}, "Nestora server is working")
 
     @app.middleware("http")
     async def request_id_middleware(request, call_next):
