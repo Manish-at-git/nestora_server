@@ -45,6 +45,15 @@ class EventPassRepository:
         )
         return int(row["total"] or 0)
 
+    async def primary_buyer_pass(self, event_id: str, account_id: str) -> dict | None:
+        return await self.one(
+            "SELECT * FROM event_passes WHERE event_id=:event_id AND account_id=:account_id "
+            "AND shared_from_pass_id IS NULL AND status <> 'Cancelled' "
+            "ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
+            event_id=event_id,
+            account_id=account_id,
+        )
+
     async def buyer(self, account_id: str) -> dict | None:
         return await self.one(
             "SELECT COALESCE(ud.name, a.email) name, ud.contact_number mobile "
@@ -70,6 +79,16 @@ class EventPassRepository:
             ":remaining_passes,:pass_code,:qr_data,:amount_paid,:payment_method,"
             ":payment_status,:status,:shared_from_pass_id,:shared_to_mobile,0)",
             **values,
+        )
+
+    async def add_to_pass(self, pass_id: str, count: int, amount: Decimal) -> None:
+        await self.execute(
+            "UPDATE event_passes SET total_passes=total_passes+:count, "
+            "remaining_passes=remaining_passes+:count, amount_paid=amount_paid+:amount, "
+            "status='Active', updated_at=NOW() WHERE id=:pass_id",
+            pass_id=pass_id,
+            count=count,
+            amount=amount,
         )
 
     async def my_passes(self, event_id: str, account_id: str) -> list[dict]:

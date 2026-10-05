@@ -1,5 +1,6 @@
 """Profile request and response contracts."""
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -38,6 +39,8 @@ class VehicleRequest(BaseModel):
     registration_number: str = Field(min_length=1, max_length=50)
     insurance_url: str | None = None
     puc_url: str | None = None
+    insurance_reminder_date: date | None = None
+    puc_reminder_date: date | None = None
 
 
 class PetRequest(BaseModel):

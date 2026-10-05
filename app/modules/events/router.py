@@ -31,6 +31,7 @@ router = APIRouter(tags=["Events"])
 async def book_event_pass(event_id: str, payload: EventPassBookingRequest, context: AuthContext = Depends(require_csrf), session: AsyncSession = Depends(get_db_session)) -> dict:
     async with UnitOfWork(session):
         result = await EventPassService(session).book(event_id, payload, context.account)
+    await publish_pending_notifications(session)
     return success_response(result)
 
 

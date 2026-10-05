@@ -15,6 +15,7 @@ from app.modules.events.schemas import (
     EventPassBookingRequest, EventPassCheckInRequest, EventPassShareRequest,
 )
 from app.modules.events.service import EventService
+from app.modules.notifications.service import create_notification
 
 
 def serialize(value: object) -> object:
@@ -63,20 +64,26 @@ class EventPassService:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "A Nestora Wallet is required to record this UPI payment.")
             await self.repo.record_upi_payment(wallet["id"], amount, event.title)
 
-        buyer = await self.repo.buyer(account.id)
-        pass_id = str(uuid.uuid4())
-        pass_code = f"PASS-{uuid.uuid4().hex[:8].upper()}"
-        await self.repo.insert_pass({
-            "id": pass_id, "event_id": event_id, "account_id": account.id,
-            "buyer_name": buyer["name"] if buyer else account.email,
-            "buyer_mobile": buyer["mobile"] if buyer else None,
-            "total_passes": payload.member_count, "remaining_passes": payload.member_count,
-            "pass_code": pass_code,
-            "qr_data": json.dumps({"pass_id": pass_id, "pass_code": pass_code, "event_id": event_id}),
-            "amount_paid": amount, "payment_method": payload.payment_method if amount > 0 else "free",
-            "payment_status": "Completed", "status": "Active",
-            "shared_from_pass_id": None, "shared_to_mobile": None,
-        })
+        existing_pass = await self.repo.primary_buyer_pass(event_id, account.id)
+        if existing_pass:
+            pass_id = existing_pass["id"]
+            pass_code = existing_pass["pass_code"]
+            await self.repo.add_to_pass(pass_id, payload.member_count, amount)
+        else:
+            buyer = await self.repo.buyer(account.id)
+            pass_id = str(uuid.uuid4())
+            pass_code = f"PASS-{uuid.uuid4().hex[:8].upper()}"
+            await self.repo.insert_pass({
+                "id": pass_id, "event_id": event_id, "account_id": account.id,
+                "buyer_name": buyer["name"] if buyer else account.email,
+                "buyer_mobile": buyer["mobile"] if buyer else None,
+                "total_passes": payload.member_count, "remaining_passes": payload.member_count,
+                "pass_code": pass_code,
+                "qr_data": json.dumps({"pass_id": pass_id, "pass_code": pass_code, "event_id": event_id}),
+                "amount_paid": amount, "payment_method": payload.payment_method if amount > 0 else "free",
+                "payment_status": "Completed", "status": "Active",
+                "shared_from_pass_id": None, "shared_to_mobile": None,
+            })
         rsvp = await self.events.repository.rsvp(event_id, account.id)
         if rsvp:
             rsvp.status = "going"
@@ -88,6 +95,19 @@ class EventPassService:
                 status="going", is_deleted=False,
             ))
         await self.repo.session.flush()
+        await create_notification(
+            self.repo.session,
+            account.id,
+            "Event pass booked",
+            f"Your pass for {event.title} is ready.",
+            notification_type="event",
+            association_id=event.association_id,
+            created_by_account_id=account.id,
+            entity_type="event_pass",
+            entity_id=pass_id,
+            action_url=f"/event-pass/{pass_id}",
+            metadata={"event_id": event.id, "pass_id": pass_id},
+        )
         return {
             "pass_id": pass_id, "pass_code": pass_code,
             "pass_link": f"/event-pass/{pass_id}", "member_count": payload.member_count,

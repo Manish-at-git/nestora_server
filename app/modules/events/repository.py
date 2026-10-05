@@ -84,7 +84,7 @@ class EventRepository:
                 f"FROM event_passes WHERE account_id=:account_id AND event_id IN ({placeholders}) "
                 "AND shared_from_pass_id IS NULL "
                 "AND status IN ('Active','Checked In') "
-                "ORDER BY remaining_passes DESC,created_at DESC"
+                "ORDER BY created_at ASC"
             ),
             {**id_params, "account_id": account_id},
         )

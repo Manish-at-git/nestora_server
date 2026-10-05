@@ -130,6 +130,8 @@ class Vehicle(Base):
     registration_number: Mapped[str] = mapped_column(String(50), nullable=False)
     insurance_url: Mapped[str | None] = mapped_column(String(255))
     puc_url: Mapped[str | None] = mapped_column(String(255))
+    insurance_reminder_date: Mapped[date | None] = mapped_column(Date)
+    puc_reminder_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
