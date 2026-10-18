@@ -1,0 +1,1 @@
+"""Association Income Statement module."""

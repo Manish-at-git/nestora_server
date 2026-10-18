@@ -19,6 +19,8 @@ from app.modules.events import models as event_models  # noqa: F401 - registers 
 from app.modules.locations import models as location_models  # noqa: F401 - registers mapped tables
 from app.modules.email_templates import models as email_template_models  # noqa: F401 - registers mapped tables
 from app.modules.nearby_places import models as nearby_place_models  # noqa: F401 - registers mapped tables
+from app.modules.balance_sheets import models as balance_sheet_models  # noqa: F401 - registers mapped tables
+from app.modules.income_statements import models as income_statement_models  # noqa: F401 - registers mapped tables
 
 config = context.config
 if config.config_file_name is not None:

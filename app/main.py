@@ -21,6 +21,8 @@ from app.modules.auth.router import (
     router as auth_router,
 )
 from app.modules.bank.router import router as bank_router
+from app.modules.balance_sheets.router import router as balance_sheets_router
+from app.modules.income_statements.router import router as income_statements_router
 from app.modules.board_tasks.router import router as board_tasks_router
 from app.modules.amenities.router import router as amenities_router
 from app.modules.announcements.router import router as announcements_router
@@ -105,6 +107,8 @@ def create_app() -> FastAPI:
     app.include_router(subscriptions_router, prefix="/api")
     app.include_router(associations_router, prefix="/api")
     app.include_router(bank_router, prefix="/api")
+    app.include_router(balance_sheets_router, prefix="/api")
+    app.include_router(income_statements_router, prefix="/api")
     app.include_router(board_tasks_router, prefix="/api")
     app.include_router(amenities_router, prefix="/api")
     app.include_router(announcements_router, prefix="/api")

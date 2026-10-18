@@ -51,6 +51,8 @@ WELCOME_NOTIFICATION_ID = "5d8fd65f-25e1-4d57-932b-696b5db13e7d"
 EMAIL_TEMPLATES_FEATURE_ID = "e27a28bc-a3de-4e8d-8b83-65835caa33c2"
 NEARBY_PLACES_FEATURE_ID = "4ac15eef-1fad-41d1-8c68-4d5a5aaf2026"
 CHAT_POOL_FEATURE_ID = "626f8a3e-1782-46f9-9a0c-d23a1e7ed1af"
+BALANCE_SHEET_FEATURE_ID = "60000000-0000-4000-8000-000000000001"
+INCOME_STATEMENT_FEATURE_ID = "60000000-0000-4000-8000-000000000002"
 VISITOR_MANAGEMENT_FEATURE_ID = "50000000-0000-4000-8000-000000000001"
 GATE_CONSOLE_FEATURE_ID = "50000000-0000-4000-8000-000000000003"
 PRE_APPROVED_VISITORS_FEATURE_ID = "50000000-0000-4000-8000-000000000004"
@@ -826,6 +828,8 @@ async def seed_auth_data(session: AsyncSession, settings: Settings) -> None:
     await _seed_email_templates_permission(session)
     await _seed_nearby_places_feature_and_permissions(session)
     await _seed_chat_pool_feature_and_permissions(session)
+    await seed_balance_sheet_feature_and_permissions(session)
+    await seed_income_statement_feature_and_permissions(session)
     await seed_visitor_features_and_permissions(session)
     await _seed_subscription_plans(session, snapshot.get("subscription_plans", []))
     await _seed_associations(session, snapshot.get("associations", []))
@@ -856,6 +860,217 @@ async def seed_auth_data(session: AsyncSession, settings: Settings) -> None:
     await _seed_wallets(session, snapshot)
     bootstrap_admin = await _seed_bootstrap_super_admin(session, settings)
     await _seed_welcome_notification(session, bootstrap_admin.id)
+
+
+async def seed_balance_sheet_feature_and_permissions(
+    session: AsyncSession,
+) -> dict[str, int]:
+    """Create or normalize the standalone Balance Sheet catalogue and RBAC rows."""
+    feature = await session.scalar(
+        select(Feature).where(
+            (Feature.code == FeatureCode.BALANCE_SHEET)
+            | (Feature.route == FeatureRoute.BALANCE_SHEET)
+        )
+    )
+    created_feature = 0
+    if feature is None:
+        feature = Feature(
+            id=BALANCE_SHEET_FEATURE_ID,
+            code=FeatureCode.BALANCE_SHEET,
+            name=FeatureName.BALANCE_SHEET,
+            description="Association Balance Sheet snapshots, imports, and exports.",
+            parent_id=None,
+            icon="Scale",
+            route=FeatureRoute.BALANCE_SHEET,
+            order_index=35,
+            is_system=True,
+            is_active=True,
+            is_deleted=False,
+        )
+        session.add(feature)
+        await session.flush()
+        created_feature = 1
+    else:
+        feature.code = FeatureCode.BALANCE_SHEET
+        feature.name = FeatureName.BALANCE_SHEET
+        feature.description = "Association Balance Sheet snapshots, imports, and exports."
+        feature.parent_id = None
+        feature.icon = "Scale"
+        feature.route = FeatureRoute.BALANCE_SHEET
+        feature.order_index = 35
+        feature.is_system = True
+        feature.is_active = True
+        feature.is_deleted = False
+
+    manager_codes = {
+        RoleCode.SUPER_ADMIN,
+        RoleCode.ADMIN,
+        RoleCode.ACCOUNTANT,
+    }
+    viewer_sidebar_order = {
+        RoleCode.SUPER_ADMIN: 15,
+        RoleCode.ADMIN: 16,
+        RoleCode.ACCOUNTANT: 35,
+        RoleCode.BOARD_MEMBER: 12,
+        RoleCode.COMMITTEE_MEMBER: 12,
+        RoleCode.HOMEOWNER: 12,
+    }
+    roles = list(
+        (
+            await session.scalars(
+                select(Role).where(
+                    Role.is_deleted.is_(False),
+                    Role.is_active.is_(True),
+                )
+            )
+        ).all()
+    )
+    created_permissions = 0
+    updated_permissions = 0
+    disabled_permissions = 0
+    for role in roles:
+        permission = await session.scalar(
+            select(RoleFeaturePermission).where(
+                RoleFeaturePermission.role_id == role.id,
+                RoleFeaturePermission.feature_id == feature.id,
+            )
+        )
+        sidebar_order = viewer_sidebar_order.get(role.code)
+        if sidebar_order is None:
+            if permission is not None and not permission.is_deleted:
+                permission.can_create = False
+                permission.can_view = False
+                permission.can_update = False
+                permission.can_delete = False
+                permission.sidebar_order = 0
+                permission.is_deleted = True
+                disabled_permissions += 1
+            continue
+
+        if permission is None:
+            permission = RoleFeaturePermission(
+                id=str(uuid.uuid4()),
+                role_id=role.id,
+                feature_id=feature.id,
+            )
+            session.add(permission)
+            created_permissions += 1
+        else:
+            updated_permissions += 1
+
+        can_manage = role.code in manager_codes
+        permission.can_create = can_manage
+        permission.can_view = True
+        permission.can_update = can_manage
+        permission.can_delete = False
+        permission.sidebar_order = sidebar_order
+        permission.is_deleted = False
+
+    await session.flush()
+    return {
+        "features_created": created_feature,
+        "permissions_created": created_permissions,
+        "permissions_updated": updated_permissions,
+        "permissions_disabled": disabled_permissions,
+    }
+
+
+async def seed_income_statement_feature_and_permissions(session: AsyncSession) -> dict[str, int]:
+    """Create or normalize Income Statement catalogue and RBAC rows."""
+    feature = await session.scalar(
+        select(Feature).where(
+            (Feature.code == FeatureCode.INCOME_STATEMENT)
+            | (Feature.route == FeatureRoute.INCOME_STATEMENT)
+        )
+    )
+    created_feature = 0
+    if feature is None:
+        feature = Feature(
+            id=INCOME_STATEMENT_FEATURE_ID,
+            code=FeatureCode.INCOME_STATEMENT,
+            name=FeatureName.INCOME_STATEMENT,
+            description="Association Income Statement fiscal-period snapshots and insights.",
+            parent_id=None,
+            icon="ChartNoAxesCombined",
+            route=FeatureRoute.INCOME_STATEMENT,
+            order_index=36,
+            is_system=True,
+            is_active=True,
+            is_deleted=False,
+        )
+        session.add(feature)
+        await session.flush()
+        created_feature = 1
+    else:
+        feature.name = FeatureName.INCOME_STATEMENT
+        feature.description = "Association Income Statement fiscal-period snapshots and insights."
+        feature.icon = "ChartNoAxesCombined"
+        feature.route = FeatureRoute.INCOME_STATEMENT
+        feature.order_index = 36
+        feature.is_system = True
+        feature.is_active = True
+        feature.is_deleted = False
+
+    manager_codes = {
+        RoleCode.SUPER_ADMIN,
+        RoleCode.ADMIN,
+        RoleCode.ACCOUNTANT,
+    }
+    viewer_sidebar_order = {
+        RoleCode.SUPER_ADMIN: 16,
+        RoleCode.ADMIN: 17,
+        RoleCode.ACCOUNTANT: 36,
+        RoleCode.BOARD_MEMBER: 13,
+        RoleCode.COMMITTEE_MEMBER: 13,
+        RoleCode.HOMEOWNER: 13,
+    }
+    roles = list(
+        (
+            await session.scalars(
+                select(Role).where(
+                    Role.is_deleted.is_(False),
+                    Role.is_active.is_(True),
+                )
+            )
+        ).all()
+    )
+    created_permissions = 0
+    updated_permissions = 0
+    disabled_permissions = 0
+    for role in roles:
+        permission = await session.scalar(select(RoleFeaturePermission).where(RoleFeaturePermission.role_id == role.id, RoleFeaturePermission.feature_id == feature.id))
+        sidebar_order = viewer_sidebar_order.get(role.code)
+        if sidebar_order is None:
+            if permission is not None and not permission.is_deleted:
+                permission.can_create = False
+                permission.can_view = False
+                permission.can_update = False
+                permission.can_delete = False
+                permission.sidebar_order = 0
+                permission.is_deleted = True
+                disabled_permissions += 1
+            continue
+
+        if permission is None:
+            permission = RoleFeaturePermission(id=str(uuid.uuid4()), role_id=role.id, feature_id=feature.id)
+            session.add(permission)
+            created_permissions += 1
+        else:
+            updated_permissions += 1
+        can_manage = role.code in manager_codes
+        permission.can_view = True
+        permission.can_create = can_manage
+        permission.can_update = can_manage
+        permission.can_delete = False
+        permission.sidebar_order = sidebar_order
+        permission.is_deleted = False
+    await session.flush()
+    return {
+        "features_created": created_feature,
+        "permissions_created": created_permissions,
+        "permissions_updated": updated_permissions,
+        "permissions_disabled": disabled_permissions,
+    }
 
 
 async def _seed_nearby_places_feature_and_permissions(session: AsyncSession) -> None:
