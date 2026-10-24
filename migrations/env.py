@@ -21,6 +21,10 @@ from app.modules.email_templates import models as email_template_models  # noqa:
 from app.modules.nearby_places import models as nearby_place_models  # noqa: F401 - registers mapped tables
 from app.modules.balance_sheets import models as balance_sheet_models  # noqa: F401 - registers mapped tables
 from app.modules.income_statements import models as income_statement_models  # noqa: F401 - registers mapped tables
+from app.modules.prepaid_reports import models as prepaid_report_models  # noqa: F401 - registers mapped tables
+from app.modules.vendor_aging_reports import models as vendor_aging_report_models  # noqa: F401 - registers mapped tables
+from app.modules.delinquency_reports import models as delinquency_report_models  # noqa: F401 - registers mapped tables
+from app.modules.invoices import models as invoice_models  # noqa: F401 - registers mapped tables
 
 config = context.config
 if config.config_file_name is not None:

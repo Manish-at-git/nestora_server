@@ -58,6 +58,27 @@ GATE_CONSOLE_FEATURE_ID = "50000000-0000-4000-8000-000000000003"
 PRE_APPROVED_VISITORS_FEATURE_ID = "50000000-0000-4000-8000-000000000004"
 VISITOR_HISTORY_FEATURE_ID = "50000000-0000-4000-8000-000000000006"
 
+FINANCIAL_CHILD_SIDEBAR_ORDER = {
+    "/financials/balance-sheet": 1,
+    "/financials/income-statement": 2,
+    "/financials/delinquency-report": 3,
+    "/financials/prepaid-report": 4,
+    "/financials/vendor-aging": 5,
+    "/financials/invoices": 6,
+    "/financials/bank-transactions": 7,
+    "/financials/bank-statements": 8,
+    "/financials/other-reports": 9,
+}
+
+SUPER_ADMIN_FINANCIAL_REPORTS = (
+    (FeatureCode.BALANCE_SHEET, FeatureRoute.BALANCE_SHEET, 1),
+    (FeatureCode.INCOME_STATEMENT, FeatureRoute.INCOME_STATEMENT, 2),
+    (FeatureCode.DELINQUENCY_REPORT, FeatureRoute.DELINQUENCY_REPORT, 3),
+    (FeatureCode.PREPAID_REPORT, FeatureRoute.PREPAID_REPORT, 4),
+    (FeatureCode.VENDOR_AGING_REPORT, FeatureRoute.VENDOR_AGING_REPORT, 5),
+    (FeatureCode.INVOICE, FeatureRoute.INVOICE, 6),
+)
+
 # The shared Pre-Approved Visitors feature renders a resident management
 # workflow or a security verification workflow based on the authenticated role.
 RESIDENT_VISITOR_PERMISSION_MATRIX = {
@@ -830,6 +851,8 @@ async def seed_auth_data(session: AsyncSession, settings: Settings) -> None:
     await _seed_chat_pool_feature_and_permissions(session)
     await seed_balance_sheet_feature_and_permissions(session)
     await seed_income_statement_feature_and_permissions(session)
+    await grant_super_admin_financial_report_permissions(session)
+    await normalize_financial_sidebar_order(session)
     await seed_visitor_features_and_permissions(session)
     await _seed_subscription_plans(session, snapshot.get("subscription_plans", []))
     await _seed_associations(session, snapshot.get("associations", []))
@@ -866,6 +889,10 @@ async def seed_balance_sheet_feature_and_permissions(
     session: AsyncSession,
 ) -> dict[str, int]:
     """Create or normalize the standalone Balance Sheet catalogue and RBAC rows."""
+    financials_feature = await session.scalar(
+        select(Feature).where(Feature.code == FeatureCode.FINANCIALS)
+    )
+    financials_parent_id = financials_feature.id if financials_feature else None
     feature = await session.scalar(
         select(Feature).where(
             (Feature.code == FeatureCode.BALANCE_SHEET)
@@ -879,7 +906,7 @@ async def seed_balance_sheet_feature_and_permissions(
             code=FeatureCode.BALANCE_SHEET,
             name=FeatureName.BALANCE_SHEET,
             description="Association Balance Sheet snapshots, imports, and exports.",
-            parent_id=None,
+            parent_id=financials_parent_id,
             icon="Scale",
             route=FeatureRoute.BALANCE_SHEET,
             order_index=35,
@@ -894,7 +921,7 @@ async def seed_balance_sheet_feature_and_permissions(
         feature.code = FeatureCode.BALANCE_SHEET
         feature.name = FeatureName.BALANCE_SHEET
         feature.description = "Association Balance Sheet snapshots, imports, and exports."
-        feature.parent_id = None
+        feature.parent_id = financials_parent_id
         feature.icon = "Scale"
         feature.route = FeatureRoute.BALANCE_SHEET
         feature.order_index = 35
@@ -908,12 +935,12 @@ async def seed_balance_sheet_feature_and_permissions(
         RoleCode.ACCOUNTANT,
     }
     viewer_sidebar_order = {
-        RoleCode.SUPER_ADMIN: 15,
-        RoleCode.ADMIN: 16,
-        RoleCode.ACCOUNTANT: 35,
-        RoleCode.BOARD_MEMBER: 12,
-        RoleCode.COMMITTEE_MEMBER: 12,
-        RoleCode.HOMEOWNER: 12,
+        RoleCode.SUPER_ADMIN: 1,
+        RoleCode.ADMIN: 1,
+        RoleCode.ACCOUNTANT: 1,
+        RoleCode.BOARD_MEMBER: 1,
+        RoleCode.COMMITTEE_MEMBER: 1,
+        RoleCode.HOMEOWNER: 1,
     }
     roles = list(
         (
@@ -977,6 +1004,10 @@ async def seed_balance_sheet_feature_and_permissions(
 
 async def seed_income_statement_feature_and_permissions(session: AsyncSession) -> dict[str, int]:
     """Create or normalize Income Statement catalogue and RBAC rows."""
+    financials_feature = await session.scalar(
+        select(Feature).where(Feature.code == FeatureCode.FINANCIALS)
+    )
+    financials_parent_id = financials_feature.id if financials_feature else None
     feature = await session.scalar(
         select(Feature).where(
             (Feature.code == FeatureCode.INCOME_STATEMENT)
@@ -990,7 +1021,7 @@ async def seed_income_statement_feature_and_permissions(session: AsyncSession) -
             code=FeatureCode.INCOME_STATEMENT,
             name=FeatureName.INCOME_STATEMENT,
             description="Association Income Statement fiscal-period snapshots and insights.",
-            parent_id=None,
+            parent_id=financials_parent_id,
             icon="ChartNoAxesCombined",
             route=FeatureRoute.INCOME_STATEMENT,
             order_index=36,
@@ -1004,6 +1035,7 @@ async def seed_income_statement_feature_and_permissions(session: AsyncSession) -
     else:
         feature.name = FeatureName.INCOME_STATEMENT
         feature.description = "Association Income Statement fiscal-period snapshots and insights."
+        feature.parent_id = financials_parent_id
         feature.icon = "ChartNoAxesCombined"
         feature.route = FeatureRoute.INCOME_STATEMENT
         feature.order_index = 36
@@ -1017,12 +1049,12 @@ async def seed_income_statement_feature_and_permissions(session: AsyncSession) -
         RoleCode.ACCOUNTANT,
     }
     viewer_sidebar_order = {
-        RoleCode.SUPER_ADMIN: 16,
-        RoleCode.ADMIN: 17,
-        RoleCode.ACCOUNTANT: 36,
-        RoleCode.BOARD_MEMBER: 13,
-        RoleCode.COMMITTEE_MEMBER: 13,
-        RoleCode.HOMEOWNER: 13,
+        RoleCode.SUPER_ADMIN: 2,
+        RoleCode.ADMIN: 2,
+        RoleCode.ACCOUNTANT: 2,
+        RoleCode.BOARD_MEMBER: 2,
+        RoleCode.COMMITTEE_MEMBER: 2,
+        RoleCode.HOMEOWNER: 2,
     }
     roles = list(
         (
@@ -1070,6 +1102,85 @@ async def seed_income_statement_feature_and_permissions(session: AsyncSession) -
         "permissions_created": created_permissions,
         "permissions_updated": updated_permissions,
         "permissions_disabled": disabled_permissions,
+    }
+
+
+async def normalize_financial_sidebar_order(session: AsyncSession) -> None:
+    """Apply the legacy Financials submenu order to every active permission row."""
+    rows = (
+        await session.execute(
+            select(RoleFeaturePermission, Feature.route).join(
+                Feature, Feature.id == RoleFeaturePermission.feature_id
+            )
+        )
+    ).all()
+    for permission, route in rows:
+        sidebar_order = FINANCIAL_CHILD_SIDEBAR_ORDER.get(route)
+        if sidebar_order is not None:
+            permission.sidebar_order = sidebar_order
+    await session.flush()
+
+
+async def grant_super_admin_financial_report_permissions(
+    session: AsyncSession,
+) -> dict[str, int]:
+    """Grant supported report access to Super Admin without changing the catalogue."""
+    super_admin = await session.scalar(
+        select(Role).where(
+            Role.code == RoleCode.SUPER_ADMIN,
+            Role.is_deleted.is_(False),
+            Role.is_active.is_(True),
+        )
+    )
+    if super_admin is None:
+        raise RuntimeError("The active Super Admin role is required before seeding permissions")
+
+    created = 0
+    updated = 0
+    for feature_code, feature_route, sidebar_order in SUPER_ADMIN_FINANCIAL_REPORTS:
+        feature = await session.scalar(
+            select(Feature).where(
+                Feature.code == feature_code,
+                Feature.route == feature_route,
+                Feature.is_deleted.is_(False),
+                Feature.is_active.is_(True),
+            )
+        )
+        if feature is None:
+            raise RuntimeError(
+                f"Financial feature '{feature_code.value}' is missing from the catalogue; "
+                "restore the existing feature instead of creating a duplicate"
+            )
+
+        permission = await session.scalar(
+            select(RoleFeaturePermission).where(
+                RoleFeaturePermission.role_id == super_admin.id,
+                RoleFeaturePermission.feature_id == feature.id,
+            )
+        )
+        if permission is None:
+            permission = RoleFeaturePermission(
+                id=str(uuid.uuid4()),
+                role_id=super_admin.id,
+                feature_id=feature.id,
+            )
+            session.add(permission)
+            created += 1
+        else:
+            updated += 1
+
+        permission.can_view = True
+        permission.can_create = True
+        permission.can_update = True
+        permission.can_delete = False
+        permission.sidebar_order = sidebar_order
+        permission.is_deleted = False
+
+    await session.flush()
+    return {
+        "features_found": len(SUPER_ADMIN_FINANCIAL_REPORTS),
+        "permissions_created": created,
+        "permissions_updated": updated,
     }
 
 
