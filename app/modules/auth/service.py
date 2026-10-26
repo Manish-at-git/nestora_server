@@ -432,6 +432,7 @@ class AuthService:
         rows = await self.repository.get_role_permissions(account.role_id)
         name = await self._account_name(account)
         association_id = await self._account_association_id(account)
+        association_name = await self._association_name(association_id)
         return AccountResponse(
             account_id=account.id,
             email=account.email,
@@ -439,6 +440,7 @@ class AuthService:
             role=account.role.name,
             role_code=account.role.code,
             association_id=association_id,
+            association_name=association_name,
             role_permissions=[
                 RolePermissionResponse(
                     feature_id=feature.id,
@@ -471,6 +473,17 @@ class AuthService:
                 "WHERE ud.user_id = :user_id AND ud.is_deleted = 0 LIMIT 1"
             ),
             {"user_id": account.user_id},
+        )
+
+    async def _association_name(self, association_id: str | None) -> str | None:
+        if not association_id:
+            return None
+        return await self.repository.session.scalar(
+            text(
+                "SELECT name FROM associations "
+                "WHERE id = :association_id AND is_deleted = 0"
+            ),
+            {"association_id": association_id},
         )
 
     async def _account_name(self, account: Account) -> str | None:

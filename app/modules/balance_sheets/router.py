@@ -265,7 +265,7 @@ async def download_balance_sheet_template() -> StreamingResponse:
     )
 
 
-@router.get("/export", dependencies=[VIEWER_DEP])
+@router.get("/export", dependencies=[MANAGER_DEP])
 async def export_balance_sheet(
     association_id: str,
     context: Annotated[AuthContext, Depends(get_auth_context)],

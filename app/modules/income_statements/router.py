@@ -246,7 +246,7 @@ async def import_income_statement(
     return success_response(IncomeStatementMutationResponse(id=statement.id, imported_items=len(items)), "Income Statement imported successfully")
 
 
-@router.get("/export", dependencies=[VIEWER_DEP])
+@router.get("/export", dependencies=[MANAGER_DEP])
 async def export_income_statement(
     association_id: str,
     context: Annotated[AuthContext, Depends(get_auth_context)],

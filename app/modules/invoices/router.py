@@ -101,7 +101,7 @@ async def list_invoice_vendors(
     )
 
 
-@router.get("/export", dependencies=[VIEWER_DEP])
+@router.get("/export", dependencies=[MANAGER_DEP])
 async def export_invoices(
     association_id: str,
     context: Annotated[AuthContext, Depends(get_auth_context)],

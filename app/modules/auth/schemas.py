@@ -196,6 +196,7 @@ class AccountResponse(BaseModel):
     role: str
     role_code: str
     association_id: str | None = None
+    association_name: str | None = None
     role_permissions: list[RolePermissionResponse] = Field(default_factory=list)
 
 

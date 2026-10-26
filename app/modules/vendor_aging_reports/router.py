@@ -343,7 +343,7 @@ async def list_vendor_aging_periods(
     return success_response(periods)
 
 
-@router.get("/export", dependencies=[VIEWER_DEP])
+@router.get("/export", dependencies=[MANAGER_DEP])
 async def export_vendor_aging_report(
     association_id: str,
     context: Annotated[AuthContext, Depends(get_auth_context)],
