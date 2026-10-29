@@ -2,7 +2,12 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+
+MOBILE_NUMBER_PATTERN = re.compile(r"^\d{10}$")
 
 
 class UserCreateRequest(BaseModel):
@@ -12,15 +17,31 @@ class UserCreateRequest(BaseModel):
     contact_number: str = Field(min_length=1, max_length=30)
     role_id: str
     association_id: str
+    unit_id: str | None = None
+
+    @field_validator("contact_number")
+    @classmethod
+    def contact_number_is_valid(cls, value: str) -> str:
+        if not MOBILE_NUMBER_PATTERN.fullmatch(value):
+            raise ValueError("Enter a valid 10-digit mobile number")
+        return value
 
 
 class UserUpdateRequest(BaseModel):
     email: EmailStr | None = None
     contact_number: str | None = None
     association_id: str | None = None
+    unit_id: str | None = None
     block_name: str | None = None
     unit_number: str | None = None
     role_name: str | None = None
+
+    @field_validator("contact_number")
+    @classmethod
+    def contact_number_is_valid(cls, value: str | None) -> str | None:
+        if value is not None and not MOBILE_NUMBER_PATTERN.fullmatch(value):
+            raise ValueError("Enter a valid 10-digit mobile number")
+        return value
 
 
 class UserResponse(BaseModel):
@@ -36,6 +57,7 @@ class UserResponse(BaseModel):
     activation_code: str | None = None
     activation_status: str | None = None
     role_name: str | None = None
+    role_code: str | None = None
     unit_id: str | None = None
     block_id: str | None = None
     association_id: str | None = None

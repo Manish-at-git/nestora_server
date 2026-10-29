@@ -94,7 +94,7 @@ class UserRepository:
             text(
                 "SELECT u.user_id, u.first_name, u.last_name, u.name, u.contact_number, u.email, "
                 "a.account_id, uc.login_code AS activation_code, uc.status AS activation_status, "
-                "COALESCE(r.name, '') AS role_name, "
+                "COALESCE(r.name, '') AS role_name, COALESCE(r.code, '') AS role_code, "
                 "un.id AS unit_id, b.id AS block_id, COALESCE(assoc.id, dir_assoc.id) AS association_id, "
                 "COALESCE(assoc.name, dir_assoc.name) AS association_name, b.name AS block_name, "
                 "un.unit_number, COALESCE(assoc.address_line_1, dir_assoc.address_line_1) AS assoc_addr1, "
@@ -133,6 +133,33 @@ class UserRepository:
         )
         row = result.first()
         return row[0] if row else None
+
+    async def unit_belongs_to_association(self, unit_id: str, association_id: str) -> bool:
+        result = await self.session.execute(
+            text(
+                "SELECT 1 FROM units u JOIN blocks b ON u.block_id = b.id "
+                "WHERE u.id = :unit_id AND b.association_id = :association_id LIMIT 1"
+            ),
+            {"unit_id": unit_id, "association_id": association_id},
+        )
+        return result.first() is not None
+
+    async def blocks(self, association_id: str) -> list[dict]:
+        result = await self.session.execute(
+            text(
+                "SELECT id, name FROM blocks WHERE association_id = :association_id "
+                "ORDER BY name"
+            ),
+            {"association_id": association_id},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+    async def block_units(self, block_id: str) -> list[dict]:
+        result = await self.session.execute(
+            text("SELECT id, unit_number FROM units WHERE block_id = :block_id ORDER BY unit_number"),
+            {"block_id": block_id},
+        )
+        return [dict(row) for row in result.mappings().all()]
 
     async def block_exists(self, association_id: str, block_name: str) -> bool:
         result = await self.session.execute(

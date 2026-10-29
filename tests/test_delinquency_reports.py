@@ -19,6 +19,7 @@ from app.modules.delinquency_reports.router import (
     MANAGER_ROLE_CODES,
     VIEWER_ROLE_CODES,
     build_export_workbook,
+    build_import_template_workbook,
     delinquency_report_template,
     parse_import_workbook,
 )
@@ -209,6 +210,12 @@ async def test_template_contains_required_import_fields() -> None:
     assert response.headers["content-disposition"] == (
         'attachment; filename="delinquency_report_import_template.xlsx"'
     )
+    workbook = build_import_template_workbook()
+    sheet = workbook["Delinquency Report"]
+
+    assert "Maintenance" in sheet["A3"].value
+    assert "Charge Category" in sheet["D4"].value
+    assert str(sheet.data_validations.dataValidation[0].sqref) == "D5:D1004"
 
 
 @pytest.mark.asyncio
@@ -248,6 +255,38 @@ async def test_import_error_identifies_the_bad_row_field_and_value() -> None:
         RoleCode.BOARD_MEMBER,
         RoleCode.COMMITTEE_MEMBER,
     }
+
+
+@pytest.mark.asyncio
+async def test_import_error_identifies_only_the_missing_required_field() -> None:
+    serialized = await DelinquencyReportService(AsyncMock()).serialize(report())
+    workbook = build_export_workbook(serialized)
+    workbook.active["E8"] = None
+
+    with pytest.raises(ValueError, match="Row 8: Charge Category is required"):
+        parse_import_workbook(
+            workbook,
+            "association-1",
+            "01 Apr 2027 - 31 Mar 2028",
+        )
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_a_charge_category_outside_the_approved_list() -> None:
+    serialized = await DelinquencyReportService(AsyncMock()).serialize(report())
+    workbook = build_export_workbook(serialized)
+    workbook.active["E8"] = "Random category"
+
+    with pytest.raises(
+        ValueError,
+        match="Row 8: Charge Category must be one of Maintenance, Late Fee, "
+        "Special Assessment, Utilities, Other",
+    ):
+        parse_import_workbook(
+            workbook,
+            "association-1",
+            "01 Apr 2027 - 31 Mar 2028",
+        )
 
 
 def test_delinquency_routes_are_registered() -> None:

@@ -9,7 +9,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +51,13 @@ VIEWER_DEP = Depends(require_role(*VIEWER_ROLE_CODES))
 MANAGER_DEP = Depends(require_role(*MANAGER_ROLE_CODES))
 router = APIRouter(prefix="/delinquency-reports", tags=["Delinquency Reports"])
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
+CHARGE_CATEGORY_VALUES = [
+    "Maintenance",
+    "Late Fee",
+    "Special Assessment",
+    "Utilities",
+    "Other",
+]
 
 
 def normalize_cell_label(value: object) -> str:
@@ -170,9 +179,27 @@ def parse_import_workbook(workbook, association_id: str, fiscal_period: str) -> 
         member_name = str(value_for("member_name") or "").strip()
         unit_number = str(value_for("unit_number") or "").strip()
         charge_category = str(value_for("charge_category") or "").strip()
-        if not member_name or not unit_number or not charge_category:
+        missing_fields = [
+            label
+            for label, value in (
+                ("Member Name", member_name),
+                ("Unit Number", unit_number),
+                ("Charge Category", charge_category),
+            )
+            if not value
+        ]
+        if missing_fields:
+            field_list = ", ".join(missing_fields)
+            verb = "is" if len(missing_fields) == 1 else "are"
             errors.append(
-                f"Row {row_number}: Member Name, Unit Number, and Charge Category are required."
+                f"Row {row_number}: {field_list} {verb} required."
+            )
+            continue
+        if charge_category not in CHARGE_CATEGORY_VALUES:
+            allowed_categories = ", ".join(CHARGE_CATEGORY_VALUES)
+            errors.append(
+                f"Row {row_number}: Charge Category must be one of {allowed_categories}; "
+                f"received {display_value(charge_category)}."
             )
             continue
         try:
@@ -323,13 +350,18 @@ def workbook_response(workbook: Workbook, filename: str) -> StreamingResponse:
     )
 
 
-@router.get("/template", dependencies=[MANAGER_DEP])
-async def delinquency_report_template() -> StreamingResponse:
+def build_import_template_workbook() -> Workbook:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Delinquency Report"
     sheet["A1"] = "Total billed amount"
     sheet["A2"] = "Total collected amount"
+    sheet.merge_cells("A3:G3")
+    sheet["A3"] = (
+        "Charge Category options: " + ", ".join(CHARGE_CATEGORY_VALUES)
+    )
+    sheet["A3"].font = Font(italic=True, color="475569")
+    sheet["A3"].alignment = Alignment(horizontal="left")
     for row in (1, 2):
         sheet.cell(row=row, column=1).font = Font(bold=True, color="475569")
         sheet.cell(row=row, column=2).fill = PatternFill("solid", fgColor="FEF3C7")
@@ -348,6 +380,32 @@ async def delinquency_report_template() -> StreamingResponse:
         cell = sheet.cell(row=4, column=column, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="DC2626")
+
+    allowed_values = workbook.create_sheet("Allowed Values")
+    allowed_values.append(["Charge Category"])
+    for category in CHARGE_CATEGORY_VALUES:
+        allowed_values.append([category])
+    allowed_values.sheet_state = "hidden"
+
+    category_validation = DataValidation(
+        type="list",
+        formula1="'Allowed Values'!$A$2:$A$6",
+        allow_blank=False,
+    )
+    category_validation.error = "Choose a Charge Category from the list."
+    category_validation.errorTitle = "Charge Category is required"
+    sheet.add_data_validation(category_validation)
+    category_validation.add("D5:D1004")
+
+    required_field_fill = PatternFill("solid", fgColor="FEE2E2")
+    for column in ("A", "B", "D"):
+        sheet.conditional_formatting.add(
+            f"{column}5:{column}1004",
+            FormulaRule(
+                formula=[f'AND(COUNTA($A5:$G5)>0,{column}5="")'],
+                fill=required_field_fill,
+            ),
+        )
     sheet.column_dimensions["A"].width = 28
     sheet.column_dimensions["B"].width = 16
     sheet.column_dimensions["C"].width = 14
@@ -357,7 +415,15 @@ async def delinquency_report_template() -> StreamingResponse:
     sheet.column_dimensions["G"].width = 20
     sheet.freeze_panes = "A5"
     sheet.sheet_view.showGridLines = False
-    return workbook_response(workbook, "delinquency_report_import_template.xlsx")
+    return workbook
+
+
+@router.get("/template", dependencies=[MANAGER_DEP])
+async def delinquency_report_template() -> StreamingResponse:
+    return workbook_response(
+        build_import_template_workbook(),
+        "delinquency_report_import_template.xlsx",
+    )
 
 
 @router.post(

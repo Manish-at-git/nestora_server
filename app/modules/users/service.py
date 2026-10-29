@@ -7,12 +7,20 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.contact_normalization import normalize_email, normalize_phone
+from app.core.constants import RoleCode
 from app.modules.users.messages import UserMessage
 from app.modules.users.models import UserCode, UserDetail
 from app.modules.users.repository import UserRepository
 from app.modules.users.schemas import UserCreateRequest, UserUpdateRequest
 
 logger = logging.getLogger("nestora.server.users")
+
+RESIDENT_ROLE_CODES = {
+    RoleCode.HOMEOWNER,
+    RoleCode.TENANT,
+    RoleCode.BOARD_MEMBER,
+    RoleCode.COMMITTEE_MEMBER,
+}
 
 
 class UserService:
@@ -29,10 +37,18 @@ class UserService:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.EMAIL_EXISTS)
         if await self.repository.phone_exists(phone):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.PHONE_EXISTS)
-        if await self.repository.role(payload.role_id) is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ROLE_NOT_FOUND)
         if not await self.repository.association_exists(payload.association_id):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ASSOCIATION_NOT_FOUND)
+        role = await self.repository.role(payload.role_id)
+        if role is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ROLE_NOT_FOUND)
+        if role.code in RESIDENT_ROLE_CODES and not payload.unit_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "A unit is required for this role")
+        if payload.unit_id and not await self.repository.unit_belongs_to_association(
+            payload.unit_id, payload.association_id
+        ):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.UNIT_NOT_FOUND)
+
         code = await self.repository.create_code()
         user = UserDetail(
             user_id=str(uuid.uuid4()),
@@ -43,8 +59,9 @@ class UserService:
             contact_number=phone,
             first_name=payload.first_name.strip(),
             last_name=payload.last_name.strip(),
-            role_id=payload.role_id,
+            role_id=role.id,
             association_id=payload.association_id,
+            unit_id=payload.unit_id,
             is_deleted=False,
         )
         self.repository.add_user(user)
@@ -67,15 +84,22 @@ class UserService:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.PHONE_EXISTS)
         if payload.association_id and not await self.repository.association_exists(payload.association_id):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ASSOCIATION_NOT_FOUND)
+        role = await self.repository.role(role_name=payload.role_name.strip()) if payload.role_name else await self.repository.role(user.role_id)
         if payload.role_name:
-            role = await self.repository.role(role_name=payload.role_name.strip())
             if role is None:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.ROLE_NOT_FOUND)
             user.role_id = role.id
             account = await self.repository.find_account(user_id)
             if account:
                 account.role_id = role.id
-        if payload.association_id and payload.block_name and payload.unit_number:
+        association_id = payload.association_id or user.association_id
+        if payload.unit_id:
+            if association_id is None or not await self.repository.unit_belongs_to_association(
+                payload.unit_id, association_id
+            ):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.UNIT_NOT_FOUND)
+            user.unit_id = payload.unit_id
+        elif payload.association_id and payload.block_name and payload.unit_number:
             if not await self.repository.block_exists(payload.association_id, payload.block_name):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.BLOCK_NOT_FOUND)
             unit_id = await self.repository.find_unit(
@@ -84,6 +108,8 @@ class UserService:
             if unit_id is None:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, UserMessage.UNIT_NOT_FOUND)
             user.unit_id = unit_id
+        if role and role.code in RESIDENT_ROLE_CODES and not (payload.unit_id or user.unit_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "A unit is required for this role")
         if payload.email:
             user.email = email
             await self.repository.update_account_email(user_id, email)
@@ -92,6 +118,14 @@ class UserService:
         if payload.association_id:
             user.association_id = payload.association_id
         await self.repository.session.flush()
+
+    async def blocks(self, association_id: str) -> list[dict]:
+        if not await self.repository.association_exists(association_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, UserMessage.ASSOCIATION_NOT_FOUND)
+        return await self.repository.blocks(association_id)
+
+    async def block_units(self, block_id: str) -> list[dict]:
+        return await self.repository.block_units(block_id)
 
     async def send_code(self, user_id: str) -> None:
         user = await self.repository.get(user_id)

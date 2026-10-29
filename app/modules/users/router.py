@@ -30,6 +30,22 @@ async def list_users(session: AsyncSession = Depends(get_db_session)) -> dict:
     return success_response([UserResponse(**row) for row in await UserService(session).list()])
 
 
+@router.get("/associations/{association_id}/blocks")
+async def association_blocks(
+    association_id: str,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return success_response(await UserService(session).blocks(association_id))
+
+
+@router.get("/blocks/{block_id}/units")
+async def block_units(
+    block_id: str,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return success_response(await UserService(session).block_units(block_id))
+
+
 @router.post("", response_model=ApiResponse[UserCreateResponse], status_code=status.HTTP_201_CREATED)
 async def create_user(
     payload: UserCreateRequest,
