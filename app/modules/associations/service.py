@@ -26,6 +26,11 @@ from app.modules.associations.schemas import (
     AssociationSubscriptionRequest,
 )
 from app.modules.subscriptions.models import SubscriptionPlan
+from app.modules.subscriptions.trial import (
+    calculate_effective_subscription_status,
+    calculate_subscription_expiry,
+    calculate_trial_info,
+)
 from app.modules.users.models import UserCode, UserDetail
 
 
@@ -140,6 +145,29 @@ class AssociationService:
         for association in associations:
             association.unit_count = await self.repository.unit_count(association.id)
             association.allowed_features = await self.repository.allowed_features(association.current_plan_id)
+            trial = calculate_trial_info(
+                trial_days=association.plan.trial_days if association.plan else 0,
+                subscription_status=association.subscription_status,
+                subscription_start=association.subscription_start,
+                subscription_end=association.subscription_end,
+                today=date.today(),
+            )
+            association.trial_days = trial.trial_days
+            association.trial_days_left = trial.trial_days_left
+            association.trial_display = trial.trial_display
+            association.is_trial_expired = trial.is_trial_expired
+            association.effective_subscription_status = calculate_effective_subscription_status(
+                configured_status=association.subscription_status,
+                subscription_end=association.subscription_end,
+                today=date.today(),
+            )
+            expiry = calculate_subscription_expiry(
+                subscription_end=association.subscription_end,
+                today=date.today(),
+            )
+            association.subscription_days_left = expiry.days_left
+            association.subscription_expiry_display = expiry.display
+            association.is_subscription_expired = expiry.is_expired
         return associations
 
     async def stats(self, association_id: str) -> dict:
@@ -180,6 +208,24 @@ class AssociationService:
         if not updated:
             raise HTTPException(status.HTTP_404_NOT_FOUND, AssociationMessage.NOT_FOUND)
 
+    async def occupancy_units(
+        self, association_id: str, account_id: str, role_code: str
+    ) -> list[dict]:
+        await self._require_settings_access(association_id, account_id, role_code)
+        return await self.repository.units_for_occupancy(association_id)
+
+    async def update_unit_occupancy(
+        self,
+        association_id: str,
+        unit_id: str,
+        is_rented: bool,
+        account_id: str,
+        role_code: str,
+    ) -> None:
+        await self._require_settings_access(association_id, account_id, role_code)
+        if not await self.repository.set_unit_occupancy(association_id, unit_id, is_rented):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Unit not found in this association")
+
     async def _require_settings_access(
         self, association_id: str, account_id: str, role_code: str
     ) -> None:
@@ -193,18 +239,28 @@ class AssociationService:
         association = await self.repository.get(association_id)
         if association is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, AssociationMessage.NOT_FOUND)
-        if payload.plan_id and await self.repository.session.scalar(
-            select(SubscriptionPlan.id).where(
+        plan = None
+        if payload.plan_id:
+            plan = await self.repository.session.scalar(
+                select(SubscriptionPlan).where(
                 SubscriptionPlan.id == payload.plan_id,
                 SubscriptionPlan.is_active.is_(True),
                 SubscriptionPlan.is_deleted.is_(False),
             )
-        ) is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, AssociationMessage.PLAN_NOT_FOUND)
+            )
+            if plan is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, AssociationMessage.PLAN_NOT_FOUND)
         values = payload.model_dump()
         association.current_plan_id = values.pop("plan_id")
         for key, value in values.items():
             setattr(association, key, value)
+        if plan and ("plan_id" in payload.model_fields_set or "subscription_status" not in payload.model_fields_set):
+            start = association.subscription_start or date.today()
+            association.subscription_start = start
+            if plan.trial_days > 0 and association.payment_status != "Paid":
+                association.subscription_end = association.subscription_end or (start + timedelta(days=plan.trial_days))
+            elif association.subscription_status not in {"Inactive", "Cancelled", "Canceled"}:
+                association.subscription_status = "Active"
         await self.repository.session.flush()
 
     async def _validate_workbook_contacts(
@@ -377,6 +433,19 @@ class AssociationService:
             )
         association_code = association_name.upper().replace(" ", "")[:4].ljust(4, "0")
         association_id = str(uuid.uuid4())
+        plan = None
+        if plan_id:
+            plan = await self.repository.session.scalar(
+                select(SubscriptionPlan).where(
+                    SubscriptionPlan.id == plan_id,
+                    SubscriptionPlan.is_active.is_(True),
+                    SubscriptionPlan.is_deleted.is_(False),
+                )
+            )
+            if plan is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, AssociationMessage.PLAN_NOT_FOUND)
+        subscription_start = datetime.utcnow().date()
+        plan_period_days = plan.trial_days if plan else 0
         association = Association(
             id=association_id,
             name=association_name,
@@ -389,8 +458,9 @@ class AssociationService:
             url=clean(association_data.get("Association URL")) or None,
             contract_url=contract_url,
             current_plan_id=plan_id,
-            subscription_status="Active" if plan_id else "Trial",
-            subscription_start=datetime.utcnow().date() if plan_id else None,
+            subscription_status="Active",
+            subscription_start=subscription_start if plan_id else None,
+            subscription_end=(subscription_start + timedelta(days=plan_period_days)) if plan_period_days else None,
             is_deleted=False,
         )
         self.repository.session.add(association)

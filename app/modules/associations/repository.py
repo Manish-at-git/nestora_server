@@ -59,6 +59,34 @@ class AssociationRepository:
         )
         return int(result or 0)
 
+    async def units_for_occupancy(self, association_id: str) -> list[dict]:
+        result = await self.session.execute(
+            text(
+                "SELECT u.id, u.unit_number, b.name AS block_name, COALESCE(u.is_rented, 0) AS is_rented "
+                "FROM units u JOIN blocks b ON b.id = u.block_id "
+                "WHERE b.association_id = :association_id ORDER BY b.name, u.unit_number"
+            ),
+            {"association_id": association_id},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+    async def set_unit_occupancy(
+        self, association_id: str, unit_id: str, is_rented: bool
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                "UPDATE units u JOIN blocks b ON b.id = u.block_id "
+                "SET u.is_rented = :is_rented "
+                "WHERE u.id = :unit_id AND b.association_id = :association_id"
+            ),
+            {
+                "association_id": association_id,
+                "unit_id": unit_id,
+                "is_rented": is_rented,
+            },
+        )
+        return bool(result.rowcount)
+
     async def stats(self, association_id: str) -> dict:
         blocks = await self.session.scalar(
             text("SELECT COUNT(*) FROM blocks WHERE association_id = :id").bindparams(id=association_id)
@@ -108,7 +136,8 @@ class AssociationRepository:
 
         assessment = await self.session.execute(
             text(
-                "SELECT frequency, default_amount, due_day_of_month FROM assessment_rules "
+                "SELECT frequency, default_amount, due_day_of_month, is_advanced_enabled, "
+                "owner_occupied_amount, rented_amount FROM assessment_rules "
                 "WHERE association_id = :association_id LIMIT 1"
             ),
             {"association_id": association_id},
@@ -156,7 +185,9 @@ class AssociationRepository:
                 await self.session.execute(
                     text(
                         "UPDATE assessment_rules SET frequency = :frequency, "
-                        "default_amount = :default_amount, due_day_of_month = :due_day_of_month "
+                        "default_amount = :default_amount, due_day_of_month = :due_day_of_month, "
+                        "is_advanced_enabled = :is_advanced_enabled, "
+                        "owner_occupied_amount = :owner_occupied_amount, rented_amount = :rented_amount "
                         "WHERE association_id = :association_id"
                     ),
                     values,
@@ -165,8 +196,10 @@ class AssociationRepository:
                 await self.session.execute(
                     text(
                         "INSERT INTO assessment_rules "
-                        "(id, association_id, frequency, default_amount, due_day_of_month) "
-                        "VALUES (:id, :association_id, :frequency, :default_amount, :due_day_of_month)"
+                        "(id, association_id, frequency, default_amount, due_day_of_month, "
+                        "is_advanced_enabled, owner_occupied_amount, rented_amount) "
+                        "VALUES (:id, :association_id, :frequency, :default_amount, :due_day_of_month, "
+                        ":is_advanced_enabled, :owner_occupied_amount, :rented_amount)"
                     ),
                     {"id": str(uuid.uuid4()), **values},
                 )

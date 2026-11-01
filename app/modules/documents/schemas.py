@@ -81,12 +81,18 @@ class UnitDocumentRequest(BaseModel):
     file_name: str | None = None
     file_type: str | None = None
     file_size_kb: int | None = None
+    is_visible_to_board: bool = False
 
 
 class UnitDocumentUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     type: str = Field(min_length=1, max_length=50)
     description: str | None = None
+    file_url: str | None = None
+    file_name: str | None = None
+    file_type: str | None = None
+    file_size_kb: int | None = None
+    is_visible_to_board: bool | None = None
 
 
 class UnitDocumentResponse(BaseModel):
@@ -104,6 +110,7 @@ class UnitDocumentResponse(BaseModel):
     file_name: str | None = None
     file_type: str | None = None
     file_size_kb: int | None = None
+    is_visible_to_board: bool = False
     created_at: datetime | None = None
 
 

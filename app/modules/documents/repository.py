@@ -121,6 +121,28 @@ class DocumentRepository:
         )
         return [dict(row) for row in result.mappings().all()]
 
+    async def list_board_visible_unit_documents(self, scoped: list[str] | None) -> list[dict]:
+        scope, params = self._scope_sql(scoped, "ud.association_id")
+        if scoped is not None and scoped:
+            marks = ",".join(f":association_{i}" for i in range(len(scoped)))
+            scope = f" AND ud.association_id IN ({marks})"
+            params = {f"association_{i}": value for i, value in enumerate(scoped)}
+        result = await self.session.execute(
+            text(
+                "SELECT ud.*, a.name association_name, u.unit_number, "
+                "COALESCE(udetail.name, acc.email) user_name FROM unit_documents ud "
+                "JOIN associations a ON a.id=ud.association_id AND a.is_deleted=0 "
+                "LEFT JOIN units u ON u.id=ud.unit_id "
+                "JOIN accounts acc ON acc.account_id=ud.user_id "
+                "JOIN roles r ON r.id=acc.role_id "
+                "LEFT JOIN user_details udetail ON udetail.user_id=acc.user_id "
+                "WHERE ud.is_deleted=0 AND (ud.is_visible_to_board=1 OR r.code='tenant')"
+                + scope + " ORDER BY ud.created_at DESC"
+            ),
+            params,
+        )
+        return [dict(row) for row in result.mappings().all()]
+
     async def get_unit_document(self, document_id: str) -> dict | None:
         result = await self.session.execute(
             text("SELECT * FROM unit_documents WHERE id=:id AND is_deleted=0"), {"id": document_id}
@@ -131,14 +153,14 @@ class DocumentRepository:
     async def create_unit_document(self, values: dict) -> str:
         await self.session.execute(text("""INSERT INTO unit_documents
             (id, association_id, unit_id, user_id, name, type, description, file_url, file_name, file_type,
-             file_size_kb, is_deleted) VALUES (:id,:association_id,:unit_id,:user_id,:name,:type,:description,
-             :file_url,:file_name,:file_type,:file_size_kb,0)"""), values)
+             file_size_kb, is_visible_to_board, is_deleted) VALUES (:id,:association_id,:unit_id,:user_id,:name,:type,:description,
+             :file_url,:file_name,:file_type,:file_size_kb,:is_visible_to_board,0)"""), values)
         return values["id"]
 
     async def update_unit_document(self, document_id: str, values: dict) -> bool:
         values["id"] = document_id
         result = await self.session.execute(
-            text("UPDATE unit_documents SET name=:name, type=:type, description=:description WHERE id=:id AND is_deleted=0"),
+            text("UPDATE unit_documents SET name=:name, type=:type, description=:description, file_url=:file_url, file_name=:file_name, file_type=:file_type, file_size_kb=:file_size_kb, is_visible_to_board=:is_visible_to_board WHERE id=:id AND is_deleted=0"),
             values,
         )
         return bool(result.rowcount)

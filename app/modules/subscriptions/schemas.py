@@ -6,6 +6,27 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator
 
 
+SUBSCRIPTION_PLAN_COUNTRIES = {
+    "IN": "IN",
+    "INDIA": "IN",
+    "US": "US",
+    "USA": "US",
+    "UNITED STATES": "US",
+    "GB": "GB",
+    "UK": "GB",
+    "UNITED KINGDOM": "GB",
+    "CA": "CA",
+    "CANADA": "CA",
+    "AU": "AU",
+    "AUSTRALIA": "AU",
+    "SG": "SG",
+    "SINGAPORE": "SG",
+    "AE": "AE",
+    "UAE": "AE",
+    "UNITED ARAB EMIRATES": "AE",
+}
+
+
 class SubscriptionPlanRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     code: str | None = Field(default=None, max_length=50)
@@ -24,7 +45,10 @@ class SubscriptionPlanRequest(BaseModel):
     @field_validator("country")
     @classmethod
     def normalize_country(cls, value: str) -> str:
-        return value.upper()
+        normalized = value.strip().upper()
+        if normalized not in SUBSCRIPTION_PLAN_COUNTRIES:
+            raise ValueError("Select a supported country / region")
+        return SUBSCRIPTION_PLAN_COUNTRIES[normalized]
 
 
 class SubscriptionPlanResponse(BaseModel):

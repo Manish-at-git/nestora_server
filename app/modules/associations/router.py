@@ -22,9 +22,11 @@ from app.modules.associations.schemas import (
     AssociationSettingsResponse,
     AssociationSettingsUpdateRequest,
     AssociationStats,
+    AssociationUnitResponse,
     AssociationSubscriptionRequest,
     MutationResponse,
     AssociationOnboardResponse,
+    UnitOccupancyUpdateRequest,
 )
 from app.modules.associations.service import AssociationService
 from app.modules.email_templates.constants import EmailTemplateEventType
@@ -237,10 +239,22 @@ def serialize_association(association) -> AssociationResponse:
         current_plan_id=association.current_plan_id,
         plan_name=association.plan.name if association.plan else None,
         subscription_status=association.subscription_status,
+        effective_subscription_status=getattr(
+            association, "effective_subscription_status", association.subscription_status or "Active"
+        ),
         subscription_start=association.subscription_start,
         subscription_end=association.subscription_end,
         renewal_date=association.renewal_date,
         payment_status=association.payment_status,
+        trial_days=getattr(association, "trial_days", 0),
+        trial_days_left=getattr(association, "trial_days_left", 0),
+        trial_display=getattr(association, "trial_display", "No trial"),
+        is_trial_expired=getattr(association, "is_trial_expired", False),
+        subscription_days_left=getattr(association, "subscription_days_left", None),
+        subscription_expiry_display=getattr(
+            association, "subscription_expiry_display", "No end date"
+        ),
+        is_subscription_expired=getattr(association, "is_subscription_expired", False),
         unit_count=getattr(association, "unit_count", 0),
         is_active=association.is_active,
         created_at=association.created_at,
@@ -308,6 +322,45 @@ async def update_association_settings(
             context.account.role.code,
         )
     return success_response(MutationResponse(), "Association settings updated")
+
+
+@router.get(
+    "/{association_id}/occupancy-units",
+    response_model=ApiResponse[list[AssociationUnitResponse]],
+    dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN))],
+)
+async def list_occupancy_units(
+    association_id: str,
+    context: AuthContext = Depends(get_auth_context),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    units = await AssociationService(session).occupancy_units(
+        association_id, context.account.id, context.account.role.code
+    )
+    return success_response([AssociationUnitResponse(**unit) for unit in units])
+
+
+@router.put(
+    "/{association_id}/occupancy-units/{unit_id}",
+    response_model=ApiResponse[MutationResponse],
+    dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN))],
+)
+async def update_occupancy_unit(
+    association_id: str,
+    unit_id: str,
+    payload: UnitOccupancyUpdateRequest,
+    context: AuthContext = Depends(require_csrf),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    async with UnitOfWork(session):
+        await AssociationService(session).update_unit_occupancy(
+            association_id,
+            unit_id,
+            payload.is_rented,
+            context.account.id,
+            context.account.role.code,
+        )
+    return success_response(MutationResponse(), "Unit occupancy updated")
 
 
 @router.get(

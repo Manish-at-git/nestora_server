@@ -24,10 +24,18 @@ class AssociationResponse(BaseModel):
     current_plan_id: str | None = None
     plan_name: str | None = None
     subscription_status: str | None = None
+    effective_subscription_status: str = "Active"
     subscription_start: date | None = None
     subscription_end: date | None = None
     renewal_date: date | None = None
     payment_status: str | None = None
+    trial_days: int = 0
+    trial_days_left: int = 0
+    trial_display: str = "No trial"
+    is_trial_expired: bool = False
+    subscription_days_left: int | None = None
+    subscription_expiry_display: str = "No end date"
+    is_subscription_expired: bool = False
     unit_count: int = 0
     is_active: bool
     created_at: datetime | None = None
@@ -58,11 +66,27 @@ class AssociationSubscriptionRequest(BaseModel):
         """HTML forms submit empty date/select fields as empty strings."""
         return None if value == "" else value
 
+    @field_validator("subscription_status")
+    @classmethod
+    def normalize_subscription_status(cls, value: str | None) -> str | None:
+        """Only Active and Inactive are administrator-controlled statuses."""
+        if value is None:
+            return None
+        normalized = value.strip().casefold()
+        if normalized == "active":
+            return "Active"
+        if normalized in {"inactive", "cancelled", "canceled"}:
+            return "Inactive"
+        raise ValueError("Subscription status must be Active or Inactive")
+
 
 class AssessmentRules(BaseModel):
     frequency: str = Field(min_length=1, max_length=50)
     default_amount: float = Field(ge=0)
     due_day_of_month: int = Field(ge=1, le=31)
+    is_advanced_enabled: bool = False
+    owner_occupied_amount: float | None = Field(default=None, ge=0)
+    rented_amount: float | None = Field(default=None, ge=0)
 
 
 class FineRule(BaseModel):
@@ -92,6 +116,17 @@ class AssociationSettingsUpdateRequest(BaseModel):
 
 class MutationResponse(BaseModel):
     ok: bool = True
+
+
+class UnitOccupancyUpdateRequest(BaseModel):
+    is_rented: bool
+
+
+class AssociationUnitResponse(BaseModel):
+    id: str
+    unit_number: str
+    block_name: str | None = None
+    is_rented: bool = False
 
 
 class AssociationOnboardResponse(BaseModel):

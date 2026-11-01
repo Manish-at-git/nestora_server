@@ -77,6 +77,14 @@ async def list_unit_documents(
     return success_response([UnitDocumentResponse(**row) for row in rows])
 
 
+@router.get("/board-visible-unit-documents", response_model=ApiResponse[list[UnitDocumentResponse]], dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN, RoleCode.BOARD_MEMBER))])
+async def list_board_visible_unit_documents(
+    assoc_id: str | None = Query(None), context: AuthContext = Depends(get_auth_context), session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    rows = await DocumentService(session).list_board_visible_unit(context.account, context.account.role.code, assoc_id)
+    return success_response([UnitDocumentResponse(**row) for row in rows])
+
+
 @router.get("/admin/associations/{association_id}/all-units", dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN, RoleCode.ACCOUNTANT, RoleCode.BOARD_MEMBER))])
 async def list_association_units(
     association_id: str,

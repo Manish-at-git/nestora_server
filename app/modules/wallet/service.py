@@ -68,19 +68,29 @@ class WalletService:
         return wallet
 
     async def pay_dues(self, account: Account, payload: PayDuesRequest) -> dict:
-        wallet = await self._validate_debit(account, payload.pin, payload.amount)
+        amount = await self._assessment_amount(account, payload.amount)
+        wallet = await self._validate_debit(account, payload.pin, amount)
         if await self.repository.dues_paid_this_month(wallet["id"]):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Dues already paid for this month.")
-        await self.repository.update_balance(wallet["id"], -payload.amount)
-        await self.repository.add_transaction(wallet["id"], "Debit", payload.amount, "Maintenance Dues Paid")
-        return {"message": "Dues paid successfully.", "balance": Decimal(wallet["balance"]) - payload.amount}
+        await self.repository.update_balance(wallet["id"], -amount)
+        await self.repository.add_transaction(wallet["id"], "Debit", amount, "Maintenance Dues Paid")
+        return {"message": "Dues paid successfully.", "balance": Decimal(wallet["balance"]) - amount}
 
     async def pay_dues_upi(self, account: Account, payload: PayDuesUpiRequest) -> dict:
         wallet = await self._wallet(account, True)
+        amount = await self._assessment_amount(account, payload.amount)
         if await self.repository.dues_paid_this_month(wallet["id"]):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Dues already paid for this month.")
-        await self.repository.add_transaction(wallet["id"], "UPI", payload.amount, "Maintenance Dues Paid")
+        await self.repository.add_transaction(wallet["id"], "UPI", amount, "Maintenance Dues Paid")
         return {"message": "UPI dues payment recorded successfully.", "balance": wallet["balance"]}
+
+    async def _assessment_amount(self, account: Account, supplied_amount: Decimal) -> Decimal:
+        assessment = await self.repository.assessment_amount(account.id)
+        if assessment is None or assessment.amount <= 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No maintenance assessment is configured for this unit.")
+        if supplied_amount != assessment.amount:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Maintenance dues amount no longer matches the configured assessment.")
+        return assessment.amount
 
     async def send_money(self, account: Account, payload: SendMoneyRequest) -> dict:
         sender = await self._validate_debit(account, payload.pin, payload.amount)

@@ -1,7 +1,10 @@
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.associations.assessment import AssessmentAmount, resolve_assessment_amount
 
 
 class WalletRepository:
@@ -66,4 +69,40 @@ class WalletRepository:
                 ),
                 {"wallet_id": wallet_id},
             )
+        )
+
+    async def assessment_amount(self, account_id: str) -> AssessmentAmount | None:
+        """Load the resident's rate from the association and unit, not from the client."""
+        row = (
+            await self.session.execute(
+                text(
+                    "SELECT ar.default_amount, ar.is_advanced_enabled, "
+                    "ar.owner_occupied_amount, ar.rented_amount, COALESCE(u.is_rented, 0) AS is_rented "
+                    "FROM accounts ac "
+                    "JOIN user_details ud ON ud.user_id = ac.user_id AND ud.is_deleted = 0 "
+                    "LEFT JOIN units u ON u.id = ud.unit_id "
+                    "LEFT JOIN blocks b ON b.id = u.block_id "
+                    "LEFT JOIN associations a ON a.id = COALESCE(ud.association_id, b.association_id) "
+                    "LEFT JOIN assessment_rules ar ON ar.association_id = a.id "
+                    "WHERE ac.account_id = :account_id LIMIT 1"
+                ),
+                {"account_id": account_id},
+            )
+        ).mappings().first()
+        if row is None or row["default_amount"] is None:
+            return None
+        return resolve_assessment_amount(
+            default_amount=Decimal(row["default_amount"]),
+            advanced_enabled=bool(row["is_advanced_enabled"]),
+            owner_occupied_amount=(
+                Decimal(row["owner_occupied_amount"])
+                if row["owner_occupied_amount"] is not None
+                else None
+            ),
+            rented_amount=(
+                Decimal(row["rented_amount"])
+                if row["rented_amount"] is not None
+                else None
+            ),
+            is_rented=bool(row["is_rented"]),
         )

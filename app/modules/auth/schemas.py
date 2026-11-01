@@ -181,6 +181,7 @@ class RolePermissionResponse(BaseModel):
     url: str | None = None
     order_index: int = 0
     sidebar_order: int = 0
+    included_in_plan: bool = True
     can_create: bool = False
     can_view: bool = False
     can_update: bool = False
@@ -197,6 +198,21 @@ class AccountResponse(BaseModel):
     role_code: str
     association_id: str | None = None
     association_name: str | None = None
+    allowed_features: list[str] = Field(default_factory=list)
+    subscription_status: str | None = None
+    trial_days: int = 0
+    trial_days_left: int = 0
+    trial_display: str = "No trial"
+    is_trial_expired: bool = False
+    subscription_days_left: int | None = None
+    subscription_expiry_display: str = "No end date"
+    is_subscription_expired: bool = False
+    assessment_amount: float = 0
+    assessment_total_due: float = 0
+    assessment_frequency: str | None = None
+    assessment_due_day: int | None = None
+    assessment_rate_type: str | None = None
+    assessment_paid_this_month: bool = False
     role_permissions: list[RolePermissionResponse] = Field(default_factory=list)
 
 

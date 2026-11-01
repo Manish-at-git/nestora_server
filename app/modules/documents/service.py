@@ -100,6 +100,17 @@ class DocumentService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Unauthorized for this association")
         return await self.repository.list_units(association_id)
 
+    async def list_board_visible_unit(self, account, role_code: RoleCode, association_id: str | None = None) -> list[dict]:
+        role_code = RoleCode(role_code)
+        if role_code not in {RoleCode.SUPER_ADMIN, RoleCode.ADMIN, RoleCode.BOARD_MEMBER}:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only board users can view resident uploads")
+        scoped = await self._scope(account, role_code)
+        if association_id:
+            if scoped is not None and association_id not in scoped:
+                return []
+            scoped = [association_id]
+        return await self.repository.list_board_visible_unit_documents(scoped)
+
     async def create_unit(self, account, role_code: RoleCode, payload: UnitDocumentRequest) -> str:
         role_code = RoleCode(role_code)
         scoped = await self._scope(account, role_code)
@@ -130,6 +141,8 @@ class DocumentService:
         if scoped is not None and association_id not in scoped:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Unauthorized for this association")
         values = payload.model_dump()
+        if role_code == RoleCode.TENANT:
+            values["is_visible_to_board"] = True
         values.update(
             {
                 "id": str(uuid.uuid4()),
@@ -151,7 +164,15 @@ class DocumentService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Unauthorized for this association")
         if role_code not in UNIT_DOCUMENT_MANAGER_ROLES and not owns:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
-        await self.repository.update_unit_document(document_id, payload.model_dump())
+        values = payload.model_dump()
+        for field in ("file_url", "file_name", "file_type", "file_size_kb"):
+            if values[field] is None:
+                values[field] = row[field]
+        if role_code == RoleCode.TENANT:
+            values["is_visible_to_board"] = True
+        elif values["is_visible_to_board"] is None:
+            values["is_visible_to_board"] = bool(row["is_visible_to_board"])
+        await self.repository.update_unit_document(document_id, values)
 
     async def delete_unit(self, account, role_code: RoleCode, document_id: str) -> None:
         role_code = RoleCode(role_code)

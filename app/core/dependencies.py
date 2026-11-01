@@ -34,7 +34,10 @@ async def get_auth_context(
 ) -> AuthContext:
     """Resolve the opaque HttpOnly cookie to a current active account."""
     raw_token = request.cookies.get(settings.session_cookie_name)
-    auth_session = await AuthService(session, settings).get_authenticated_session(raw_token)
+    auth_service = AuthService(session, settings)
+    auth_session = await auth_service.get_authenticated_session(raw_token)
+    if not request.url.path.endswith("/auth/logout"):
+        await auth_service.require_active_association_plan(auth_session.account)
     return AuthContext(account=auth_session.account, session=auth_session)
 
 

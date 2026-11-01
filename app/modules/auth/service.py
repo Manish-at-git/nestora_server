@@ -1,7 +1,8 @@
 """Authentication business rules, kept separate from HTTP routing and SQL query details."""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 import re
 import uuid
 import secrets
@@ -34,6 +35,14 @@ from app.modules.employees.models import Employee
 from app.modules.users.models import UserCode, UserDetail
 from app.modules.iam.models import Role
 from app.modules.wallet.models import Wallet
+from app.modules.associations.assessment import resolve_assessment_amount
+from app.modules.associations.models import Association
+from app.modules.subscriptions.models import SubscriptionPlan, SubscriptionPlanFeature
+from app.modules.subscriptions.trial import (
+    calculate_effective_subscription_status,
+    calculate_subscription_expiry,
+    calculate_trial_info,
+)
 
 
 @dataclass
@@ -69,6 +78,7 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message.INVALID_CREDENTIALS)
         if account.status != AccountStatus.ACTIVE or not account.role or not account.role.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=Message.FORBIDDEN)
+        await self.require_active_association_plan(account)
 
         session_token = generate_secret()
         csrf_token = generate_secret()
@@ -430,9 +440,27 @@ class AuthService:
         if not account.role:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=Message.FORBIDDEN)
         rows = await self.repository.get_role_permissions(account.role_id)
+        allowed_feature_ids = await self.require_active_association_plan(account)
+        plan_feature_codes: list[str] = []
+        navigation_feature_ids: set[str] | None = None
+        if allowed_feature_ids is not None:
+            navigation_feature_ids = set(allowed_feature_ids)
+            changed = True
+            while changed:
+                changed = False
+                for _, feature in rows:
+                    if feature.id in navigation_feature_ids and feature.parent_id:
+                        changed = feature.parent_id not in navigation_feature_ids or changed
+                        navigation_feature_ids.add(feature.parent_id)
+            plan_feature_codes = [
+                feature.code
+                for _, feature in rows
+                if feature.id in allowed_feature_ids and feature.code
+            ]
         name = await self._account_name(account)
         association_id = await self._account_association_id(account)
         association_name = await self._association_name(association_id)
+        resident_context = await self._resident_context(account)
         return AccountResponse(
             account_id=account.id,
             email=account.email,
@@ -441,6 +469,8 @@ class AuthService:
             role_code=account.role.code,
             association_id=association_id,
             association_name=association_name,
+            allowed_features=plan_feature_codes,
+            **resident_context,
             role_permissions=[
                 RolePermissionResponse(
                     feature_id=feature.id,
@@ -451,6 +481,10 @@ class AuthService:
                     url=feature.route,
                     order_index=feature.order_index,
                     sidebar_order=permission.sidebar_order,
+                    included_in_plan=(
+                        navigation_feature_ids is None
+                        or feature.id in navigation_feature_ids
+                    ),
                     can_create=permission.can_create,
                     can_view=permission.can_view,
                     can_update=permission.can_update,
@@ -460,8 +494,183 @@ class AuthService:
             ],
         )
 
+    @staticmethod
+    def _requires_association_plan(account: Account) -> bool:
+        """Only association-resident roles are constrained by their association plan."""
+        if not account.role:
+            return False
+        return account.role.code in {
+            RoleCode.HOMEOWNER,
+            RoleCode.BOARD_MEMBER,
+            RoleCode.COMMITTEE_MEMBER,
+            RoleCode.TENANT,
+        }
+
+    async def require_active_association_plan(self, account: Account) -> set[str] | None:
+        """Require an active association plan and return the plan's enabled feature IDs."""
+        if not self._requires_association_plan(account):
+            return None
+        association_id = await self._account_association_id(account)
+        if not association_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Your account is not linked to an association with an active plan.",
+            )
+        association = await self.repository.session.scalar(
+            select(Association).where(
+                Association.id == association_id,
+                Association.is_deleted.is_(False),
+            )
+        )
+        if association is None or not association.current_plan_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Your association does not have an active subscription plan.",
+            )
+        plan_id = association.current_plan_id
+        active_plan = await self.repository.session.scalar(
+            select(SubscriptionPlan.id).where(
+                SubscriptionPlan.id == plan_id,
+                SubscriptionPlan.is_active.is_(True),
+                SubscriptionPlan.is_deleted.is_(False),
+            )
+        )
+        if not active_plan:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Your association does not have an active subscription plan.",
+            )
+        feature_ids = await self.repository.session.scalars(
+            select(SubscriptionPlanFeature.feature_id).where(
+                SubscriptionPlanFeature.plan_id == plan_id,
+                SubscriptionPlanFeature.is_deleted.is_(False),
+            )
+        )
+        return set(feature_ids.all())
+
+    async def _resident_context(self, account: Account) -> dict:
+        """Return server-calculated trial and assessment values for a resident account."""
+        if not account.user_id:
+            return {}
+        result = await self.repository.session.execute(
+            text(
+                "SELECT a.subscription_status, a.subscription_start, a.subscription_end, "
+                "sp.trial_days, ar.frequency, ar.default_amount, ar.due_day_of_month, "
+                "ar.is_advanced_enabled, ar.owner_occupied_amount, ar.rented_amount, "
+                "COALESCE(u.is_rented, 0) AS is_rented "
+                "FROM user_details ud "
+                "LEFT JOIN units u ON u.id = ud.unit_id "
+                "LEFT JOIN blocks b ON b.id = u.block_id "
+                "LEFT JOIN associations a ON a.id = COALESCE(ud.association_id, b.association_id) "
+                "LEFT JOIN subscription_plans sp ON sp.id = a.current_plan_id "
+                "LEFT JOIN assessment_rules ar ON ar.association_id = a.id "
+                "WHERE ud.user_id = :user_id AND ud.is_deleted = 0 LIMIT 1"
+            ),
+            {"user_id": account.user_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return {}
+        trial = calculate_trial_info(
+            trial_days=row["trial_days"],
+            subscription_status=row["subscription_status"],
+            subscription_start=row["subscription_start"],
+            subscription_end=row["subscription_end"],
+            today=date.today(),
+        )
+        subscription_expiry = calculate_subscription_expiry(
+            subscription_end=row["subscription_end"],
+            today=date.today(),
+        )
+        effective_subscription_status = calculate_effective_subscription_status(
+            configured_status=row["subscription_status"],
+            subscription_end=row["subscription_end"],
+            today=date.today(),
+        )
+        assessment = resolve_assessment_amount(
+            default_amount=Decimal(row["default_amount"] or 0),
+            advanced_enabled=bool(row["is_advanced_enabled"]),
+            owner_occupied_amount=(
+                Decimal(row["owner_occupied_amount"])
+                if row["owner_occupied_amount"] is not None
+                else None
+            ),
+            rented_amount=(
+                Decimal(row["rented_amount"])
+                if row["rented_amount"] is not None
+                else None
+            ),
+            is_rented=bool(row["is_rented"]),
+        )
+        wallet = await self.repository.session.scalar(
+            text(
+                "SELECT w.id FROM wallets w WHERE w.account_id = :account_id "
+                "AND COALESCE(w.is_deleted, 0) = 0 LIMIT 1"
+            ),
+            {"account_id": account.id},
+        )
+        paid = False
+        if wallet:
+            paid = bool(
+                await self.repository.session.scalar(
+                    text(
+                        "SELECT id FROM wallet_transactions WHERE wallet_id = :wallet_id "
+                        "AND type IN ('Debit', 'UPI') AND description = 'Maintenance Dues Paid' "
+                        "AND COALESCE(is_deleted, 0) = 0 "
+                        "AND created_at >= DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') LIMIT 1"
+                    ),
+                    {"wallet_id": wallet},
+                )
+            )
+        return {
+            "subscription_status": effective_subscription_status,
+            "trial_days": trial.trial_days,
+            "trial_days_left": trial.trial_days_left,
+            "trial_display": trial.trial_display,
+            "is_trial_expired": trial.is_trial_expired,
+            "subscription_days_left": subscription_expiry.days_left,
+            "subscription_expiry_display": subscription_expiry.display,
+            "is_subscription_expired": subscription_expiry.is_expired,
+            "assessment_amount": float(assessment.amount),
+            "assessment_total_due": float(assessment.amount),
+            "assessment_frequency": row["frequency"],
+            "assessment_due_day": row["due_day_of_month"],
+            "assessment_rate_type": assessment.rate_type,
+            "assessment_paid_this_month": paid,
+        }
+
     async def _account_association_id(self, account: Account) -> str | None:
-        """Resolve a resident's association through the assigned unit and block."""
+        """Resolve the resident association from the role's authoritative assignment."""
+        if not account.role:
+            return None
+
+        if account.role.code == RoleCode.BOARD_MEMBER:
+            association_id = await self.repository.session.scalar(
+                text(
+                    "SELECT association_id FROM board_members "
+                    "WHERE account_id = :account_id AND status = 'active' "
+                    "AND is_deleted = 0 ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"account_id": account.id},
+            )
+            if association_id:
+                return association_id
+
+        if account.role.code == RoleCode.COMMITTEE_MEMBER and account.user_id:
+            association_id = await self.repository.session.scalar(
+                text(
+                    "SELECT c.association_id FROM committee_members cm "
+                    "JOIN committees c ON c.id = cm.committee_id "
+                    "WHERE cm.user_id = :user_id AND cm.is_deleted = 0 "
+                    "AND c.is_deleted = 0 "
+                    "AND (cm.end_date IS NULL OR cm.end_date >= CURRENT_DATE) "
+                    "ORDER BY cm.created_at DESC LIMIT 1"
+                ),
+                {"user_id": account.user_id},
+            )
+            if association_id:
+                return association_id
+
         if not account.user_id:
             return None
         return await self.repository.session.scalar(
