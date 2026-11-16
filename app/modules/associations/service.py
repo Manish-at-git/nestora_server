@@ -208,6 +208,21 @@ class AssociationService:
         if not updated:
             raise HTTPException(status.HTTP_404_NOT_FOUND, AssociationMessage.NOT_FOUND)
 
+    async def update_contract(
+        self,
+        association_id: str,
+        contract_url: str,
+        account_id: str,
+        role_code: str,
+    ) -> None:
+        """Store the current association contract after access has been verified."""
+        await self._require_settings_access(association_id, account_id, role_code)
+        association = await self.repository.get(association_id)
+        if association is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, AssociationMessage.NOT_FOUND)
+        association.contract_url = contract_url
+        await self.repository.session.flush()
+
     async def occupancy_units(
         self, association_id: str, account_id: str, role_code: str
     ) -> list[dict]:

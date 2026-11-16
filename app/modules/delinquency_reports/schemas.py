@@ -109,3 +109,11 @@ class DelinquencyReportResponse(BaseModel):
 class DelinquencyMutationResponse(BaseModel):
     id: str
     imported_items: int | None = None
+
+
+class DelinquencyMemberOptionResponse(BaseModel):
+    user_id: str
+    name: str
+    unit_number: str | None = None
+    block: str | None = None
+    roles: list[str]

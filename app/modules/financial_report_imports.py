@@ -1,11 +1,10 @@
 """Shared validation helpers for financial-report Excel imports."""
 
+import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-import re
 
 from pydantic import ValidationError
-
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 
@@ -110,3 +109,70 @@ def validation_error_message(
         prefix = f"Row {row_number}: " if row_number is not None else ""
         messages.append(f"{prefix}{message}.")
     return " ".join(messages) or "The workbook contains invalid data."
+
+
+def validate_member_assignments(rows, members: list[dict]) -> list[str]:
+    """Return row-specific errors when a member, unit, and block do not match."""
+    normalized_members = {
+        (
+            str(member.get("name") or "").strip().casefold(),
+            str(member.get("unit_number") or "").strip().casefold(),
+            str(member.get("block") or "").strip().casefold(),
+        )
+        for member in members
+        if member.get("name") and member.get("unit_number") and member.get("block")
+    }
+    blocks = {block for _, _, block in normalized_members}
+    units_by_block: dict[str, set[str]] = {}
+    for _, unit, block in normalized_members:
+        units_by_block.setdefault(block, set()).add(unit)
+
+    errors: list[str] = []
+    for index, item in enumerate(rows, start=1):
+        row_number, row = item if isinstance(item, tuple) else (index, item)
+        member_name = str(row.member_name or "").strip()
+        unit_number = str(row.unit_number or "").strip()
+        block = str(row.block or "").strip()
+        if not block:
+            errors.append(f"Row {row_number}: Block is required for the selected association.")
+            continue
+        normalized_block = block.casefold()
+        normalized_unit = unit_number.casefold()
+        normalized_name = member_name.casefold()
+        if normalized_block not in blocks:
+            errors.append(
+                f"Row {row_number}: Block {display_value(block)} does not exist "
+                "in the selected association."
+            )
+            continue
+        if normalized_unit not in units_by_block[normalized_block]:
+            errors.append(
+                f"Row {row_number}: Unit {display_value(unit_number)} is not in "
+                f"Block {display_value(block)}."
+            )
+            continue
+        if (normalized_name, normalized_unit, normalized_block) not in normalized_members:
+            errors.append(
+                f"Row {row_number}: Member {display_value(member_name)} is not assigned to "
+                f"Block {display_value(block)}, Unit {display_value(unit_number)}."
+            )
+    return errors
+
+
+def validate_vendor_assignments(rows, vendors) -> list[str]:
+    """Return row-specific errors when a vendor is not active for the association."""
+    vendor_names = {
+        str(vendor.name or "").strip().casefold()
+        for vendor in vendors
+        if vendor.name
+    }
+    errors: list[str] = []
+    for index, item in enumerate(rows, start=1):
+        row_number, row = item if isinstance(item, tuple) else (index, item)
+        vendor_name = str(row.vendor_name or "").strip()
+        if vendor_name.casefold() not in vendor_names:
+            errors.append(
+                f"Row {row_number}: Vendor {display_value(vendor_name)} does not exist "
+                "or is not active and mapped to the selected association."
+            )
+    return errors

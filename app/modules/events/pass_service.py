@@ -39,6 +39,8 @@ class EventPassService:
         event = await self.events._authorized_event(event_id, account)
         if not event.has_pass or event.status != "Published":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Pass booking is not open for this event.")
+        if self.events.is_completed(event.ends_at):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This event has completed. Pass booking is closed.")
         if event.registration_deadline and event.registration_deadline < datetime.now():
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Registration deadline has passed.")
         # Lock the event before counting purchases, so concurrent bookings cannot exceed capacity.

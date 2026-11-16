@@ -1,9 +1,9 @@
 """Protected API routes for association Delinquency Reports."""
 
+import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
-import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -20,19 +20,21 @@ from app.core.dependencies import AuthContext, get_auth_context, require_csrf, r
 from app.core.responses import ApiResponse, success_response
 from app.db.session import get_db_session
 from app.db.unit_of_work import UnitOfWork
-from app.modules.financial_report_imports import (
-    combined_errors,
-    display_value,
-    find_header,
-    validation_error_message,
-)
 from app.modules.delinquency_reports.schemas import (
+    DelinquencyMemberOptionResponse,
     DelinquencyMutationResponse,
     DelinquencyReportRequest,
     DelinquencyReportResponse,
     DelinquencyRowRequest,
 )
 from app.modules.delinquency_reports.service import DelinquencyReportService
+from app.modules.financial_report_imports import (
+    combined_errors,
+    display_value,
+    find_header,
+    validate_member_assignments,
+    validation_error_message,
+)
 
 VIEWER_ROLE_CODES = (
     RoleCode.SUPER_ADMIN,
@@ -113,6 +115,21 @@ def date_cell(value: object, row_number: int) -> date | None:
     )
 
 
+@router.get(
+    "/members",
+    response_model=ApiResponse[list[DelinquencyMemberOptionResponse]],
+    dependencies=[MANAGER_DEP],
+)
+async def list_delinquency_members(
+    association_id: str,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> dict:
+    return success_response(
+        await DelinquencyReportService(session).member_options(context.account, association_id)
+    )
+
+
 def find_summary_amount(rows: list[tuple], label: str) -> Decimal:
     normalized_labels = {normalize_cell_label(label)}
     if label == "Total billed amount":
@@ -137,7 +154,12 @@ def find_summary_amount(rows: list[tuple], label: str) -> Decimal:
     raise ValueError(f'The workbook is missing a numeric "{label}" value.')
 
 
-def parse_import_workbook(workbook, association_id: str, fiscal_period: str) -> DelinquencyReportRequest:
+def parse_import_workbook(
+    workbook,
+    association_id: str,
+    fiscal_period: str,
+    members: list[dict] | None = None,
+) -> DelinquencyReportRequest:
     rows = list(workbook.active.iter_rows(values_only=True))
     if not rows:
         raise ValueError("The workbook is empty. Use the Delinquency Report template.")
@@ -168,13 +190,15 @@ def parse_import_workbook(workbook, association_id: str, fiscal_period: str) -> 
     for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         if not row or not any(value not in (None, "") for value in row):
             continue
-        first_text = normalize_cell_label(next((value for value in row if value not in (None, "")), ""))
+        first_text = normalize_cell_label(
+            next((value for value in row if value not in (None, "")), "")
+        )
         if first_text in {"total", "totals"}:
             break
 
-        def value_for(field: str) -> object:
+        def value_for(field: str, source_row=row) -> object:
             index = columns.get(field, -1)
-            return row[index] if index >= 0 and index < len(row) else None
+            return source_row[index] if index >= 0 and index < len(source_row) else None
 
         member_name = str(value_for("member_name") or "").strip()
         unit_number = str(value_for("unit_number") or "").strip()
@@ -203,8 +227,7 @@ def parse_import_workbook(workbook, association_id: str, fiscal_period: str) -> 
             )
             continue
         try:
-            imported_rows.append(
-                DelinquencyRowRequest(
+            imported_row = DelinquencyRowRequest(
                     member_name=member_name,
                     unit_number=unit_number,
                     block=str(value_for("block") or "").strip() or None,
@@ -223,8 +246,10 @@ def parse_import_workbook(workbook, association_id: str, fiscal_period: str) -> 
                         value_for("last_payment_date"),
                         row_number,
                     ),
-                )
             )
+            if members is not None:
+                errors.extend(validate_member_assignments([(row_number, imported_row)], members))
+            imported_rows.append(imported_row)
         except ValidationError as exc:
             errors.append(validation_error_message(exc, row_number))
         except ValueError as exc:
@@ -350,7 +375,7 @@ def workbook_response(workbook: Workbook, filename: str) -> StreamingResponse:
     )
 
 
-def build_import_template_workbook() -> Workbook:
+def build_import_template_workbook(members: list[dict]) -> Workbook:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Delinquency Report"
@@ -368,9 +393,9 @@ def build_import_template_workbook() -> Workbook:
         sheet.cell(row=row, column=2).number_format = '#,##0.00;[Red]-#,##0.00'
 
     headers = [
-        "Member Name",
-        "Unit Number",
         "Block",
+        "Unit Number",
+        "Member Name",
         "Charge Category",
         "Outstanding Amount",
         "Days Overdue",
@@ -382,9 +407,24 @@ def build_import_template_workbook() -> Workbook:
         cell.fill = PatternFill("solid", fgColor="DC2626")
 
     allowed_values = workbook.create_sheet("Allowed Values")
-    allowed_values.append(["Charge Category"])
-    for category in CHARGE_CATEGORY_VALUES:
-        allowed_values.append([category])
+    allowed_values.append(["Charge Category", "Block", "Unit Number", "Member Name"])
+    for row, category in enumerate(CHARGE_CATEGORY_VALUES, start=2):
+        allowed_values.cell(row=row, column=1, value=category)
+    for row, block in enumerate(
+        sorted({str(item["block"]).strip() for item in members if item.get("block")}),
+        start=2,
+    ):
+        allowed_values.cell(row=row, column=2, value=block)
+    for row, unit in enumerate(
+        sorted({str(item["unit_number"]).strip() for item in members if item.get("unit_number")}),
+        start=2,
+    ):
+        allowed_values.cell(row=row, column=3, value=unit)
+    for row, name in enumerate(
+        sorted({str(item["name"]).strip() for item in members if item.get("name")}),
+        start=2,
+    ):
+        allowed_values.cell(row=row, column=4, value=name)
     allowed_values.sheet_state = "hidden"
 
     category_validation = DataValidation(
@@ -397,8 +437,19 @@ def build_import_template_workbook() -> Workbook:
     sheet.add_data_validation(category_validation)
     category_validation.add("D5:D1004")
 
+    for column, formula, title, message in (
+        ("A", "'Allowed Values'!$B$2:$B$1004", "Block", "Choose a block from the list."),
+        ("B", "'Allowed Values'!$C$2:$C$1004", "Unit", "Choose a unit from the list."),
+        ("C", "'Allowed Values'!$D$2:$D$1004", "Member", "Choose a member from the list."),
+    ):
+        validation = DataValidation(type="list", formula1=formula, allow_blank=False)
+        validation.error = message
+        validation.errorTitle = f"{title} is required"
+        sheet.add_data_validation(validation)
+        validation.add(f"{column}5:{column}1004")
+
     required_field_fill = PatternFill("solid", fgColor="FEE2E2")
-    for column in ("A", "B", "D"):
+    for column in ("A", "B", "C", "D"):
         sheet.conditional_formatting.add(
             f"{column}5:{column}1004",
             FormulaRule(
@@ -406,9 +457,9 @@ def build_import_template_workbook() -> Workbook:
                 fill=required_field_fill,
             ),
         )
-    sheet.column_dimensions["A"].width = 28
+    sheet.column_dimensions["A"].width = 14
     sheet.column_dimensions["B"].width = 16
-    sheet.column_dimensions["C"].width = 14
+    sheet.column_dimensions["C"].width = 28
     sheet.column_dimensions["D"].width = 24
     sheet.column_dimensions["E"].width = 22
     sheet.column_dimensions["F"].width = 16
@@ -419,9 +470,15 @@ def build_import_template_workbook() -> Workbook:
 
 
 @router.get("/template", dependencies=[MANAGER_DEP])
-async def delinquency_report_template() -> StreamingResponse:
+async def delinquency_report_template(
+    association_id: str,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> StreamingResponse:
     return workbook_response(
-        build_import_template_workbook(),
+        build_import_template_workbook(
+            await DelinquencyReportService(session).member_options(context.account, association_id)
+        ),
         "delinquency_report_import_template.xlsx",
     )
 
@@ -458,7 +515,12 @@ async def import_delinquency_report(
             "Unable to read the Excel workbook",
         ) from exc
     try:
-        payload = parse_import_workbook(workbook, association_id, fiscal_period)
+        payload = parse_import_workbook(
+            workbook,
+            association_id,
+            fiscal_period,
+            await DelinquencyReportService(session).member_options(context.account, association_id),
+        )
     except ValueError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,

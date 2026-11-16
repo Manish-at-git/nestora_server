@@ -32,6 +32,7 @@ from app.modules.auth.schemas import (
     UpdateDetailsRequest,
 )
 from app.modules.employees.models import Employee
+from app.modules.staff.models import StaffMember
 from app.modules.users.models import UserCode, UserDetail
 from app.modules.iam.models import Role
 from app.modules.wallet.models import Wallet
@@ -400,7 +401,7 @@ class AuthService:
         now = utc_now()
         account.password_hash = hash_password(new_password)
         account.password_changed_at = now
-        await self._clear_employee_temporary_password(account)
+        await self._clear_temporary_password(account)
         challenge.consumed_at = now
         await self.repository.consume_active_reset_challenges_for_account(account.id, now)
         await self.repository.revoke_all_sessions_for_account(account.id, now)
@@ -420,20 +421,25 @@ class AuthService:
             return False
         challenge.account.password_hash = hash_password(new_password)
         challenge.account.password_changed_at = now
-        await self._clear_employee_temporary_password(challenge.account)
+        await self._clear_temporary_password(challenge.account)
         challenge.consumed_at = now
         await self.repository.consume_active_reset_challenges_for_account(challenge.account_id, now)
         await self.repository.revoke_all_sessions_for_account(challenge.account_id, now)
         await self.repository.session.flush()
         return True
 
-    async def _clear_employee_temporary_password(self, account: Account) -> None:
-        """Remove the onboarding credential once an employee chooses a password."""
-        if not account.employee_id:
+    async def _clear_temporary_password(self, account: Account) -> None:
+        """Remove a displayed onboarding credential once its account chooses a password."""
+        if account.employee_id:
+            employee = await self.repository.session.get(Employee, account.employee_id)
+            if employee is not None:
+                employee.temp_password = None
             return
-        employee = await self.repository.session.get(Employee, account.employee_id)
-        if employee is not None:
-            employee.temp_password = None
+        staff = await self.repository.session.scalar(
+            select(StaffMember).where(StaffMember.account_id == account.id)
+        )
+        if staff is not None:
+            staff.temp_password = None
 
     async def to_account_response(self, account: Account) -> AccountResponse:
         """Translate an account and its database permission matrix into the client API shape."""
@@ -622,6 +628,19 @@ class AuthService:
                     {"wallet_id": wallet},
                 )
             )
+        active_violation_fines = Decimal(
+            await self.repository.session.scalar(
+                text(
+                    "SELECT COALESCE(SUM(fine_amount), 0) FROM violations "
+                    "WHERE violator_user_id = :user_id AND status = 'Approved' "
+                    "AND action = 'Fine' AND violator_response = 'Accept' "
+                    "AND COALESCE(fine_applied, 0) = 0"
+                ),
+                {"user_id": account.user_id},
+            )
+            or 0
+        )
+        assessment_due = Decimal("0") if paid else assessment.amount
         return {
             "subscription_status": effective_subscription_status,
             "trial_days": trial.trial_days,
@@ -632,7 +651,7 @@ class AuthService:
             "subscription_expiry_display": subscription_expiry.display,
             "is_subscription_expired": subscription_expiry.is_expired,
             "assessment_amount": float(assessment.amount),
-            "assessment_total_due": float(assessment.amount),
+            "assessment_total_due": float(assessment_due + active_violation_fines),
             "assessment_frequency": row["frequency"],
             "assessment_due_day": row["due_day_of_month"],
             "assessment_rate_type": assessment.rate_type,
@@ -670,6 +689,14 @@ class AuthService:
             )
             if association_id:
                 return association_id
+
+        if account.role.code == RoleCode.STAFF:
+            return await self.repository.session.scalar(
+                select(StaffMember.association_id).where(
+                    StaffMember.account_id == account.id,
+                    StaffMember.is_deleted.is_(False),
+                )
+            )
 
         if not account.user_id:
             return None
@@ -713,4 +740,12 @@ class AuthService:
                     Employee.is_deleted.is_(False),
                 )
             )
+        staff = await self.repository.session.scalar(
+            select(StaffMember).where(
+                StaffMember.account_id == account.id,
+                StaffMember.is_deleted.is_(False),
+            )
+        )
+        if staff:
+            return f"{staff.first_name} {staff.last_name}".strip()
         return None

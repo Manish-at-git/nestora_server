@@ -20,6 +20,7 @@ class RoleCode(StrEnum):
     BOARD_MEMBER = "board_member"
     ACCOUNTANT = "accountant"
     CSR = "csr"
+    STAFF = "staff"
 
 
 class FeatureCode(StrEnum):
@@ -45,6 +46,10 @@ class FeatureCode(StrEnum):
     GATE_CONSOLE = "gate_console"
     PRE_APPROVED_VISITORS = "pre_approved_visitors"
     VISITOR_HISTORY = "visitor_history"
+    STAFF = "staff"
+    STAFF_ENTRY = "staff_entry"
+    STAFF_ATTENDANCE_REPORT = "staff_attendance_report"
+    VIOLATIONS = "violations"
 
 
 class FeatureName(StrEnum):
@@ -60,6 +65,10 @@ class FeatureName(StrEnum):
     GATE_CONSOLE = "New Visitor"
     PRE_APPROVED_VISITORS = "Pre-Approved Visitors"
     VISITOR_HISTORY = "Visitor History"
+    STAFF = "Staff"
+    STAFF_ENTRY = "Staff Entry"
+    STAFF_ATTENDANCE_REPORT = "Staff Attendance Report"
+    VIOLATIONS = "Violations"
 
 
 class FeatureRoute(StrEnum):
@@ -78,6 +87,10 @@ class FeatureRoute(StrEnum):
     GATE_CONSOLE = "/visitor-management/new"
     PRE_APPROVED_VISITORS = "/visitor-management/preapproved"
     VISITOR_HISTORY = "/visitor-management/history"
+    STAFF = "/staff"
+    STAFF_ENTRY = "/staff"
+    STAFF_ATTENDANCE_REPORT = "/staff/attendance-report"
+    VIOLATIONS = "/violations"
 
 
 class AccountStatus(StrEnum):

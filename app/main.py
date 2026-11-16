@@ -35,6 +35,7 @@ from app.modules.polls.router import router as polls_router
 from app.modules.board_members.router import router as board_members_router
 from app.modules.committees.router import router as committees_router
 from app.modules.employees.router import router as employees_router
+from app.modules.staff.router import router as staff_router
 from app.modules.email_templates.router import router as email_templates_router
 from app.modules.nearby_places.router import router as nearby_places_router
 from app.modules.entity_types.router import router as entity_types_router
@@ -50,6 +51,7 @@ from app.modules.meetings.router import router as meetings_router
 from app.modules.marketplace.router import router as marketplace_router
 from app.modules.visitor_management.router import router as visitor_management_router
 from app.modules.wallet.router import router as wallet_router
+from app.modules.violations.router import router as violations_router
 from app.modules.permissions.router import router as permissions_router
 from app.modules.profile.router import router as profile_router
 from app.modules.roles.router import router as roles_router
@@ -129,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router, prefix="/api")
     app.include_router(chart_of_accounts_router, prefix="/api")
     app.include_router(employees_router, prefix="/api")
+    app.include_router(staff_router, prefix="/api")
     app.include_router(email_templates_router, prefix="/api")
     app.include_router(nearby_places_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
@@ -141,6 +144,7 @@ def create_app() -> FastAPI:
     app.include_router(marketplace_router, prefix="/api")
     app.include_router(visitor_management_router, prefix="/api")
     app.include_router(wallet_router, prefix="/api")
+    app.include_router(violations_router, prefix="/api")
     return app
 
 

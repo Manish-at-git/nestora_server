@@ -169,6 +169,30 @@ class DelinquencyReportService:
         await self.check_association(account, association_id)
         return await self.repository.list_periods(association_id)
 
+    async def member_options(self, account, association_id: str) -> list[dict]:
+        await self.check_association(account, association_id)
+        members: dict[str, dict] = {}
+        for row in await self.repository.member_options(association_id):
+            user_id = row["user_id"]
+            if not user_id:
+                continue
+            member = members.setdefault(
+                user_id,
+                {
+                    "user_id": user_id,
+                    "name": row["name"] or "Unnamed member",
+                    "unit_number": row["unit_number"],
+                    "block": row["block"],
+                    "roles": [],
+                },
+            )
+            if row["role_label"] not in member["roles"]:
+                member["roles"].append(row["role_label"])
+        return sorted(
+            members.values(),
+            key=lambda member: (member["name"].casefold(), member["unit_number"] or ""),
+        )
+
     @staticmethod
     def percentage(amount: Decimal, total: Decimal) -> Decimal:
         if not total:

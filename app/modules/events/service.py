@@ -47,6 +47,23 @@ class EventService:
         audiences = None if role in {RoleCode.SUPER_ADMIN, RoleCode.ADMIN, RoleCode.BOARD_MEMBER} else self._audiences(role)
         return await self.repository.list(allowed, account.id, audiences, scope.lower() if scope else "upcoming")
 
+    @staticmethod
+    def is_completed(ends_at: datetime | None, now: datetime | None = None) -> bool:
+        """An event is complete only once its explicitly configured end time has passed."""
+        if ends_at is None:
+            return False
+
+        if ends_at.tzinfo is None:
+            current_time = now or datetime.now()
+            if current_time.tzinfo is not None:
+                current_time = current_time.replace(tzinfo=None)
+        else:
+            current_time = now or datetime.now(timezone.utc)
+            if current_time.tzinfo is None:
+                current_time = current_time.replace(tzinfo=timezone.utc)
+            current_time = current_time.astimezone(ends_at.tzinfo)
+        return ends_at <= current_time
+
     async def create(self, payload: EventCreateRequest, account: Account) -> str:
         role = self.role_code(account)
         if role not in EVENT_MANAGER_ROLES:

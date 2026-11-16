@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,8 +23,10 @@ from app.modules.financial_report_imports import (
     first_nonempty_label,
     non_negative_decimal,
     typed_date,
+    validate_vendor_assignments,
     validation_error_message,
 )
+from app.modules.invoices.service import InvoiceService
 from app.modules.vendor_aging_reports.schemas import (
     VendorAgingMutationResponse,
     VendorAgingReportRequest,
@@ -54,6 +57,7 @@ def parse_import_workbook(
     workbook,
     association_id: str,
     fiscal_period: str,
+    vendors=None,
 ) -> VendorAgingReportRequest:
     rows = list(workbook.active.iter_rows(values_only=True))
     if not rows:
@@ -82,9 +86,9 @@ def parse_import_workbook(
         if first_nonempty_label(row) in {"total", "totals"}:
             break
 
-        def value_for(field: str) -> object:
+        def value_for(field: str, source_row=row) -> object:
             index = columns[field]
-            return row[index] if index < len(row) else None
+            return source_row[index] if index < len(source_row) else None
 
         vendor_name = str(value_for("vendor_name") or "").strip()
         category = str(value_for("category") or "").strip()
@@ -95,8 +99,7 @@ def parse_import_workbook(
             )
             continue
         try:
-            imported_rows.append(
-                VendorAgingRowRequest(
+            imported_row = VendorAgingRowRequest(
                     vendor_name=vendor_name,
                     category=category,
                     invoice_number=invoice_number,
@@ -118,8 +121,10 @@ def parse_import_workbook(
                     days_over_90=non_negative_decimal(
                         value_for("days_over_90"), row_number, "> 90 Days"
                     ),
-                )
             )
+            if vendors is not None:
+                errors.extend(validate_vendor_assignments([(row_number, imported_row)], vendors))
+            imported_rows.append(imported_row)
         except ValidationError as exc:
             errors.append(validation_error_message(exc, row_number))
         except ValueError as exc:
@@ -252,7 +257,12 @@ def workbook_response(workbook: Workbook, filename: str) -> StreamingResponse:
 
 
 @router.get("/template", dependencies=[MANAGER_DEP])
-async def vendor_aging_report_template() -> StreamingResponse:
+async def vendor_aging_report_template(
+    association_id: str,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> StreamingResponse:
+    vendors = await InvoiceService(session).eligible_vendors(context.account, association_id)
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Vendor Aging Report"
@@ -273,6 +283,22 @@ async def vendor_aging_report_template() -> StreamingResponse:
         cell.fill = PatternFill("solid", fgColor="2563EB")
     for column, width in enumerate((28, 22, 18, 16, 18, 17, 17, 17, 17), start=1):
         sheet.column_dimensions[chr(64 + column)].width = width
+    allowed_values = workbook.create_sheet("Allowed Values")
+    allowed_values.append(["Vendor Name"])
+    for row, vendor in enumerate(vendors, start=2):
+        allowed_values.cell(row=row, column=1, value=vendor.name)
+    allowed_values.sheet_state = "hidden"
+    vendor_validation = DataValidation(
+        type="list",
+        formula1="'Allowed Values'!$A$2:$A$1004",
+        allow_blank=False,
+    )
+    vendor_validation.error = (
+        "Choose a vendor that is active and mapped to the selected association."
+    )
+    vendor_validation.errorTitle = "Invalid Vendor"
+    sheet.add_data_validation(vendor_validation)
+    vendor_validation.add("A2:A1001")
     sheet.freeze_panes = "A2"
     sheet.sheet_view.showGridLines = False
     return workbook_response(workbook, "vendor_aging_report_import_template.xlsx")
@@ -310,7 +336,12 @@ async def import_vendor_aging_report(
             "Unable to read the Excel workbook",
         ) from exc
     try:
-        payload = parse_import_workbook(workbook, association_id, fiscal_period)
+        payload = parse_import_workbook(
+            workbook,
+            association_id,
+            fiscal_period,
+            await InvoiceService(session).eligible_vendors(context.account, association_id),
+        )
     except ValueError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,

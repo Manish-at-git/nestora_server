@@ -75,12 +75,17 @@ class InvoiceService:
         return association
 
     async def eligible_vendors(self, account, association_id: str) -> list[InvoiceVendorResponse]:
-        await self.check_association(account, association_id)
+        association = await self.check_association(account, association_id)
         vendors = list(
             (
                 await self.session.scalars(
                     select(Vendor)
-                    .where(Vendor.is_deleted.is_(False), Vendor.status == "Active")
+                    .where(
+                        Vendor.is_deleted.is_(False),
+                        Vendor.status == "Active",
+                        func.lower(func.trim(Vendor.association_name))
+                        == association.name.strip().lower(),
+                    )
                     .order_by(Vendor.name)
                 )
             ).all()

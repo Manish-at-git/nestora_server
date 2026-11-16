@@ -68,29 +68,62 @@ class WalletService:
         return wallet
 
     async def pay_dues(self, account: Account, payload: PayDuesRequest) -> dict:
-        amount = await self._assessment_amount(account, payload.amount)
-        wallet = await self._validate_debit(account, payload.pin, amount)
-        if await self.repository.dues_paid_this_month(wallet["id"]):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Dues already paid for this month.")
+        wallet = await self._wallet(account, True)
+        maintenance_amount, violation_fines = await self._outstanding_dues(account, wallet["id"])
+        amount = maintenance_amount + sum((Decimal(fine["fine_amount"]) for fine in violation_fines), Decimal("0"))
+        self._validate_due_amount(payload.amount, amount)
+        self._validate_wallet_pin(wallet, payload.pin, amount)
         await self.repository.update_balance(wallet["id"], -amount)
-        await self.repository.add_transaction(wallet["id"], "Debit", amount, "Maintenance Dues Paid")
+        await self._record_due_payment(wallet["id"], maintenance_amount, violation_fines, "Debit")
         return {"message": "Dues paid successfully.", "balance": Decimal(wallet["balance"]) - amount}
 
     async def pay_dues_upi(self, account: Account, payload: PayDuesUpiRequest) -> dict:
         wallet = await self._wallet(account, True)
-        amount = await self._assessment_amount(account, payload.amount)
-        if await self.repository.dues_paid_this_month(wallet["id"]):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Dues already paid for this month.")
-        await self.repository.add_transaction(wallet["id"], "UPI", amount, "Maintenance Dues Paid")
+        maintenance_amount, violation_fines = await self._outstanding_dues(account, wallet["id"])
+        amount = maintenance_amount + sum((Decimal(fine["fine_amount"]) for fine in violation_fines), Decimal("0"))
+        self._validate_due_amount(payload.amount, amount)
+        await self._record_due_payment(wallet["id"], maintenance_amount, violation_fines, "UPI")
         return {"message": "UPI dues payment recorded successfully.", "balance": wallet["balance"]}
 
-    async def _assessment_amount(self, account: Account, supplied_amount: Decimal) -> Decimal:
+    async def _outstanding_dues(self, account: Account, wallet_id: str) -> tuple[Decimal, list[dict]]:
         assessment = await self.repository.assessment_amount(account.id)
-        if assessment is None or assessment.amount <= 0:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No maintenance assessment is configured for this unit.")
-        if supplied_amount != assessment.amount:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Maintenance dues amount no longer matches the configured assessment.")
-        return assessment.amount
+        maintenance_amount = assessment.amount if assessment and assessment.amount > 0 else Decimal("0")
+        if maintenance_amount > 0 and await self.repository.dues_paid_this_month(wallet_id):
+            maintenance_amount = Decimal("0")
+        violation_fines = await self.repository.active_violation_fines(account.user_id, for_update=True)
+        if maintenance_amount <= 0 and not violation_fines:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No maintenance dues or accepted violation fines are outstanding.")
+        return maintenance_amount, violation_fines
+
+    @staticmethod
+    def _validate_due_amount(supplied_amount: Decimal, expected_amount: Decimal) -> None:
+        if supplied_amount != expected_amount:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Dues amount no longer matches the outstanding balance.")
+
+    @staticmethod
+    def _validate_wallet_pin(wallet: dict, pin: str, amount: Decimal) -> None:
+        if not wallet["security_pin"] or wallet["security_pin"] != pin:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid PIN.")
+        if Decimal(wallet["balance"]) < amount:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Insufficient wallet balance.")
+
+    async def _record_due_payment(
+        self,
+        wallet_id: str,
+        maintenance_amount: Decimal,
+        violation_fines: list[dict],
+        payment_type: str,
+    ) -> None:
+        if maintenance_amount > 0:
+            await self.repository.add_transaction(wallet_id, payment_type, maintenance_amount, "Maintenance Dues Paid")
+        for fine in violation_fines:
+            transaction_id = await self.repository.add_transaction(
+                wallet_id,
+                payment_type,
+                Decimal(fine["fine_amount"]),
+                f"Violation fine {fine['display_id']}",
+            )
+            await self.repository.mark_violation_fine_paid(fine["id"], transaction_id)
 
     async def send_money(self, account: Account, payload: SendMoneyRequest) -> dict:
         sender = await self._validate_debit(account, payload.pin, payload.amount)

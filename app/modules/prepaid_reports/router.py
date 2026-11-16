@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app.core.dependencies import AuthContext, get_auth_context, require_csrf, r
 from app.core.responses import ApiResponse, success_response
 from app.db.session import get_db_session
 from app.db.unit_of_work import UnitOfWork
+from app.modules.delinquency_reports.service import DelinquencyReportService
 from app.modules.financial_report_imports import (
     MAX_IMPORT_BYTES,
     combined_errors,
@@ -22,13 +24,14 @@ from app.modules.financial_report_imports import (
     first_nonempty_label,
     non_negative_decimal,
     typed_date,
+    validate_member_assignments,
     validation_error_message,
 )
 from app.modules.prepaid_reports.schemas import (
     PrepaidReportMutationResponse,
     PrepaidReportRequest,
-    PrepaidReportRowRequest,
     PrepaidReportResponse,
+    PrepaidReportRowRequest,
 )
 from app.modules.prepaid_reports.service import PrepaidReportService
 
@@ -54,6 +57,7 @@ def parse_import_workbook(
     workbook,
     association_id: str,
     fiscal_period: str,
+    members: list[dict] | None = None,
 ) -> PrepaidReportRequest:
     rows = list(workbook.active.iter_rows(values_only=True))
     if not rows:
@@ -87,9 +91,9 @@ def parse_import_workbook(
         if first_nonempty_label(row) in {"total", "totals"}:
             break
 
-        def value_for(field: str) -> object:
+        def value_for(field: str, source_row=row) -> object:
             index = columns.get(field, -1)
-            return row[index] if index >= 0 and index < len(row) else None
+            return source_row[index] if index >= 0 and index < len(source_row) else None
 
         member_name = str(value_for("member_name") or "").strip()
         unit_number = str(value_for("unit_number") or "").strip()
@@ -103,8 +107,7 @@ def parse_import_workbook(
         if isinstance(expiry_value, str) and " / " in expiry_value:
             expiry_value = expiry_value.split(" / ", 1)[0]
         try:
-            imported_rows.append(
-                PrepaidReportRowRequest(
+            imported_row = PrepaidReportRowRequest(
                     member_name=member_name,
                     unit_number=unit_number,
                     block=str(value_for("block") or "").strip() or None,
@@ -116,8 +119,10 @@ def parse_import_workbook(
                         value_for("used_amount"), row_number, "Used Amount"
                     ),
                     expiry_date=typed_date(expiry_value, row_number, "Expiry Date"),
-                )
             )
+            if members is not None:
+                errors.extend(validate_member_assignments([(row_number, imported_row)], members))
+            imported_rows.append(imported_row)
         except ValidationError as exc:
             errors.append(validation_error_message(exc, row_number))
         except ValueError as exc:
@@ -238,14 +243,22 @@ def workbook_response(workbook: Workbook, filename: str) -> StreamingResponse:
 
 
 @router.get("/template", dependencies=[MANAGER_DEP])
-async def prepaid_report_template() -> StreamingResponse:
+async def prepaid_report_template(
+    association_id: str,
+    context: Annotated[AuthContext, Depends(get_auth_context)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> StreamingResponse:
+    members = await DelinquencyReportService(session).member_options(
+        context.account,
+        association_id,
+    )
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Prepaid Report"
     headers = [
-        "Member Name",
-        "Unit Number",
         "Block",
+        "Unit Number",
+        "Member Name",
         "Category",
         "Prepaid Amount",
         "Used Amount",
@@ -255,8 +268,36 @@ async def prepaid_report_template() -> StreamingResponse:
         cell = sheet.cell(row=1, column=column, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="059669")
-    for column, width in enumerate((28, 16, 14, 24, 20, 18, 18), start=1):
+    for column, width in enumerate((14, 16, 28, 24, 20, 18, 18), start=1):
         sheet.column_dimensions[chr(64 + column)].width = width
+    allowed_values = workbook.create_sheet("Allowed Values")
+    allowed_values.append(["Member Name", "Unit Number", "Block"])
+    for row, name in enumerate(
+        sorted({str(item["name"]).strip() for item in members if item.get("name")}),
+        start=2,
+    ):
+        allowed_values.cell(row=row, column=1, value=name)
+    for row, unit in enumerate(
+        sorted({str(item["unit_number"]).strip() for item in members if item.get("unit_number")}),
+        start=2,
+    ):
+        allowed_values.cell(row=row, column=2, value=unit)
+    for row, block in enumerate(
+        sorted({str(item["block"]).strip() for item in members if item.get("block")}),
+        start=2,
+    ):
+        allowed_values.cell(row=row, column=3, value=block)
+    allowed_values.sheet_state = "hidden"
+    for column, formula, title in (
+        ("A", "'Allowed Values'!$C$2:$C$1004", "Block"),
+        ("B", "'Allowed Values'!$B$2:$B$1004", "Unit"),
+        ("C", "'Allowed Values'!$A$2:$A$1004", "Member"),
+    ):
+        validation = DataValidation(type="list", formula1=formula, allow_blank=False)
+        validation.error = f"Choose a valid {title.lower()} for the selected association."
+        validation.errorTitle = f"Invalid {title}"
+        sheet.add_data_validation(validation)
+        validation.add(f"{column}2:{column}1001")
     sheet.freeze_panes = "A2"
     sheet.sheet_view.showGridLines = False
     return workbook_response(workbook, "prepaid_report_import_template.xlsx")
@@ -294,7 +335,12 @@ async def import_prepaid_report(
             "Unable to read the Excel workbook",
         ) from exc
     try:
-        payload = parse_import_workbook(workbook, association_id, fiscal_period)
+        payload = parse_import_workbook(
+            workbook,
+            association_id,
+            fiscal_period,
+            await DelinquencyReportService(session).member_options(context.account, association_id),
+        )
     except ValueError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -49,15 +49,17 @@ class WalletRepository:
             {"wallet_id": wallet_id, "pin": pin},
         )
 
-    async def add_transaction(self, wallet_id: str, payment_type: str, amount: object, description: str) -> None:
+    async def add_transaction(self, wallet_id: str, payment_type: str, amount: object, description: str) -> str:
+        transaction_id = str(uuid.uuid4())
         await self.session.execute(
             text(
                 "INSERT INTO wallet_transactions "
                 "(id, wallet_id, type, amount, status, description, is_deleted) "
                 "VALUES (:id, :wallet_id, :type, :amount, 'Completed', :description, 0)"
             ),
-            {"id": str(uuid.uuid4()), "wallet_id": wallet_id, "type": payment_type, "amount": amount, "description": description},
+            {"id": transaction_id, "wallet_id": wallet_id, "type": payment_type, "amount": amount, "description": description},
         )
+        return transaction_id
 
     async def dues_paid_this_month(self, wallet_id: str) -> bool:
         return bool(
@@ -105,4 +107,26 @@ class WalletRepository:
                 else None
             ),
             is_rented=bool(row["is_rented"]),
+        )
+
+    async def active_violation_fines(self, homeowner_user_id: str, for_update: bool = False) -> list[dict]:
+        """Return accepted, unpaid Fine violations for a homeowner."""
+        query = (
+            "SELECT id, display_id, fine_amount FROM violations "
+            "WHERE violator_user_id = :homeowner_user_id AND status = 'Approved' "
+            "AND action = 'Fine' AND violator_response = 'Accept' "
+            "AND COALESCE(fine_applied, 0) = 0 ORDER BY created_at ASC"
+        )
+        if for_update:
+            query += " FOR UPDATE"
+        result = await self.session.execute(text(query), {"homeowner_user_id": homeowner_user_id})
+        return [dict(row) for row in result.mappings().all()]
+
+    async def mark_violation_fine_paid(self, violation_id: str, transaction_id: str) -> None:
+        await self.session.execute(
+            text(
+                "UPDATE violations SET fine_applied = 1, fine_transaction_id = :transaction_id "
+                "WHERE id = :violation_id AND COALESCE(fine_applied, 0) = 0"
+            ),
+            {"violation_id": violation_id, "transaction_id": transaction_id},
         )

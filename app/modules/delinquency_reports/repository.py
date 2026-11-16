@@ -86,6 +86,42 @@ class DelinquencyReportRepository:
         )
         return list((await self.session.scalars(query)).all())
 
+    async def member_options(self, association_id: str) -> list[dict]:
+        result = await self.session.execute(
+            text(
+                "SELECT DISTINCT ud.user_id, COALESCE(ud.name, a.email) AS name, "
+                "u.unit_number, b.name AS block, 'Homeowner' AS role_label "
+                "FROM accounts a JOIN roles r ON r.id=a.role_id "
+                "JOIN user_details ud ON ud.user_id=a.user_id "
+                "LEFT JOIN units u ON u.id=ud.unit_id LEFT JOIN blocks b ON b.id=u.block_id "
+                "WHERE ud.is_deleted=0 AND r.code=:homeowner_role "
+                "AND COALESCE(ud.association_id,b.association_id)=:association_id "
+                "UNION "
+                "SELECT DISTINCT ud.user_id, COALESCE(ud.name, a.email) AS name, "
+                "u.unit_number, b.name AS block, 'Board Member' AS role_label "
+                "FROM board_members bm JOIN accounts a ON a.account_id=bm.account_id "
+                "LEFT JOIN user_details ud ON ud.user_id=a.user_id "
+                "LEFT JOIN units u ON u.id=ud.unit_id LEFT JOIN blocks b ON b.id=u.block_id "
+                "WHERE bm.is_deleted=0 AND bm.status='active' "
+                "AND (bm.term_end_date IS NULL OR bm.term_end_date>=CURRENT_DATE) "
+                "AND bm.association_id=:association_id "
+                "UNION "
+                "SELECT DISTINCT ud.user_id, COALESCE(ud.name, a.email) AS name, "
+                "u.unit_number, b.name AS block, 'Committee Member' AS role_label "
+                "FROM committee_members cm JOIN committees c ON c.id=cm.committee_id "
+                "JOIN accounts a ON a.user_id=cm.user_id "
+                "LEFT JOIN user_details ud ON ud.user_id=cm.user_id "
+                "LEFT JOIN units u ON u.id=ud.unit_id LEFT JOIN blocks b ON b.id=u.block_id "
+                "WHERE cm.is_deleted=0 AND c.is_deleted=0 "
+                "AND (cm.start_date IS NULL OR cm.start_date<=CURRENT_DATE) "
+                "AND (cm.end_date IS NULL OR cm.end_date>=CURRENT_DATE) "
+                "AND c.association_id=:association_id "
+                "ORDER BY name, block, unit_number"
+            ),
+            {"association_id": association_id, "homeowner_role": RoleCode.HOMEOWNER.value},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
     async def duplicate_period(
         self,
         association_id: str,

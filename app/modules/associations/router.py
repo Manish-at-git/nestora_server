@@ -4,7 +4,7 @@ import asyncio
 import logging
 from io import BytesIO
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -379,6 +379,36 @@ async def update_occupancy_unit(
 )
 async def association_stats(association_id: str, session: AsyncSession = Depends(get_db_session)) -> dict:
     return success_response(AssociationStats(**(await AssociationService(session).stats(association_id))))
+
+
+@router.post(
+    "/{association_id}/contract",
+    response_model=ApiResponse[MutationResponse],
+    dependencies=[Depends(require_role(RoleCode.SUPER_ADMIN, RoleCode.ADMIN))],
+)
+async def upload_association_contract(
+    association_id: str,
+    contract_file: UploadFile = File(...),
+    context: AuthContext = Depends(require_csrf),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Upload or replace an association contract from the association details view."""
+    if not contract_file.filename:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Please choose a contract file")
+
+    uploaded = await StorageService().upload(contract_file)
+    contract_url = uploaded.get("url")
+    if not contract_url:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Contract upload did not return a file URL")
+
+    async with UnitOfWork(session):
+        await AssociationService(session).update_contract(
+            association_id,
+            contract_url,
+            context.account.id,
+            context.account.role.code,
+        )
+    return success_response(MutationResponse(), "Association contract uploaded")
 
 
 @router.put(

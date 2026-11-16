@@ -57,6 +57,10 @@ VISITOR_MANAGEMENT_FEATURE_ID = "50000000-0000-4000-8000-000000000001"
 GATE_CONSOLE_FEATURE_ID = "50000000-0000-4000-8000-000000000003"
 PRE_APPROVED_VISITORS_FEATURE_ID = "50000000-0000-4000-8000-000000000004"
 VISITOR_HISTORY_FEATURE_ID = "50000000-0000-4000-8000-000000000006"
+STAFF_FEATURE_ID = "70000000-0000-4000-8000-000000000001"
+STAFF_ATTENDANCE_REPORT_FEATURE_ID = "70000000-0000-4000-8000-000000000003"
+VIOLATIONS_FEATURE_ID = "8c91f9f5-4efb-42d8-89aa-1c57c6f2d2f7"
+STAFF_ROLE_ID = "70000000-0000-4000-8000-000000000002"
 
 FINANCIAL_CHILD_SIDEBAR_ORDER = {
     "/financials/balance-sheet": 1,
@@ -140,6 +144,162 @@ async def _seed_roles(session: AsyncSession, rows: list[dict]) -> None:
             )
         )
     await session.flush()
+
+
+async def seed_staff_feature_and_permissions(session: AsyncSession) -> dict[str, int]:
+    """Idempotently grant the main Staff feature to its managing roles.
+
+    Security retains the existing nested Staff Entry feature. The main Staff
+    navigation item is deliberately unavailable to Security to avoid a duplicate.
+    """
+    staff_role = await session.scalar(select(Role).where(Role.code == RoleCode.STAFF))
+    if staff_role is None:
+        staff_role = Role(id=STAFF_ROLE_ID, code=RoleCode.STAFF)
+        session.add(staff_role)
+    staff_role.name = "Staff"
+    staff_role.description = "Daily association worker with sign-in access and no default feature permissions."
+    staff_role.is_system = True
+    staff_role.is_active = True
+    staff_role.is_deleted = False
+    await session.flush()
+
+    feature = await session.scalar(select(Feature).where(Feature.code == FeatureCode.STAFF))
+    feature_created = feature is None
+    if feature is None:
+        feature = Feature(id=STAFF_FEATURE_ID, code=FeatureCode.STAFF)
+        session.add(feature)
+    feature.name = FeatureName.STAFF
+    feature.description = "Association daily-worker directory, permanent QR passes, and attendance."
+    feature.route = FeatureRoute.STAFF
+    feature.icon = "IdCard"
+    feature.order_index = 12
+    feature.is_system = True
+    feature.is_active = True
+    feature.is_deleted = False
+    await session.flush()
+
+    matrix = {
+        RoleCode.SUPER_ADMIN: (True, True, True, False),
+        RoleCode.ADMIN: (True, True, True, False),
+    }
+    roles = list(
+        (
+            await session.scalars(
+                select(Role).where(
+                    Role.code.in_(set(matrix)),
+                    Role.is_active.is_(True),
+                    Role.is_deleted.is_(False),
+                )
+            )
+        ).all()
+    )
+    created = 0
+    updated = 0
+    for role in roles:
+        permission = await session.scalar(
+            select(RoleFeaturePermission).where(
+                RoleFeaturePermission.role_id == role.id,
+                RoleFeaturePermission.feature_id == feature.id,
+            )
+        )
+        if permission is None:
+            permission = RoleFeaturePermission(id=str(uuid.uuid4()), role_id=role.id, feature_id=feature.id)
+            session.add(permission)
+            created += 1
+        else:
+            updated += 1
+        can_view, can_create, can_update, can_delete = matrix[RoleCode(role.code)]
+        permission.can_view = can_view
+        permission.can_create = can_create
+        permission.can_update = can_update
+        permission.can_delete = can_delete
+        permission.sidebar_order = feature.order_index
+        permission.is_deleted = False
+    await session.flush()
+    return {
+        "features_created": int(feature_created),
+        "permissions_created": created,
+        "permissions_updated": updated,
+    }
+
+
+async def seed_staff_attendance_report_feature_and_permissions(session: AsyncSession) -> dict[str, int]:
+    """Seed the manager-only monthly Staff Attendance Report feature."""
+    feature = await session.scalar(select(Feature).where(Feature.code == FeatureCode.STAFF_ATTENDANCE_REPORT))
+    created_feature = feature is None
+    if feature is None:
+        feature = Feature(id=STAFF_ATTENDANCE_REPORT_FEATURE_ID, code=FeatureCode.STAFF_ATTENDANCE_REPORT)
+        session.add(feature)
+    feature.name = FeatureName.STAFF_ATTENDANCE_REPORT
+    feature.description = "Month-wise attendance, completed hours, and incomplete staff check-ins."
+    feature.route = FeatureRoute.STAFF_ATTENDANCE_REPORT
+    feature.icon = "CalendarDays"
+    feature.order_index = 13
+    feature.is_system = True
+    feature.is_active = True
+    feature.is_deleted = False
+    await session.flush()
+    roles = list((await session.scalars(select(Role).where(Role.code.in_({RoleCode.SUPER_ADMIN, RoleCode.ADMIN})))).all())
+    created = updated = 0
+    for role in roles:
+        permission = await session.scalar(select(RoleFeaturePermission).where(
+            RoleFeaturePermission.role_id == role.id,
+            RoleFeaturePermission.feature_id == feature.id,
+        ))
+        if permission is None:
+            permission = RoleFeaturePermission(id=str(uuid.uuid4()), role_id=role.id, feature_id=feature.id)
+            session.add(permission)
+            created += 1
+        else:
+            updated += 1
+        permission.can_view = True
+        permission.can_create = False
+        permission.can_update = False
+        permission.can_delete = False
+        permission.sidebar_order = feature.order_index
+        permission.is_deleted = False
+    await session.flush()
+    return {"features_created": int(created_feature), "permissions_created": created, "permissions_updated": updated}
+
+
+async def seed_violations_feature_and_permissions(session: AsyncSession) -> dict[str, int]:
+    """Keep the violations feature available on fresh databases and repaired seed runs."""
+    feature = await session.scalar(select(Feature).where(Feature.code == FeatureCode.VIOLATIONS))
+    created_feature = feature is None
+    if feature is None:
+        feature = Feature(id=VIOLATIONS_FEATURE_ID, code=FeatureCode.VIOLATIONS)
+        session.add(feature)
+    feature.name = FeatureName.VIOLATIONS
+    feature.description = "Association violation reporting, review, and resolution."
+    feature.route = FeatureRoute.VIOLATIONS
+    feature.icon = "ShieldAlert"
+    feature.order_index = 48
+    feature.is_system = True
+    feature.is_active = True
+    feature.is_deleted = False
+    await session.flush()
+
+    matrix = {
+        RoleCode.SUPER_ADMIN: (True, False, True, False),
+        RoleCode.ADMIN: (True, True, True, False),
+        RoleCode.BOARD_MEMBER: (True, False, True, False),
+        RoleCode.HOMEOWNER: (True, True, True, False),
+    }
+    roles = list((await session.scalars(select(Role).where(Role.code.in_(set(matrix)), Role.is_active.is_(True), Role.is_deleted.is_(False)))).all())
+    for role in roles:
+        permission = await session.scalar(select(RoleFeaturePermission).where(RoleFeaturePermission.role_id == role.id, RoleFeaturePermission.feature_id == feature.id))
+        if permission is None:
+            permission = RoleFeaturePermission(id=str(uuid.uuid4()), role_id=role.id, feature_id=feature.id)
+            session.add(permission)
+        can_view, can_create, can_update, can_delete = matrix[RoleCode(role.code)]
+        permission.can_view = can_view
+        permission.can_create = can_create
+        permission.can_update = can_update
+        permission.can_delete = can_delete
+        permission.sidebar_order = feature.order_index
+        permission.is_deleted = False
+    await session.flush()
+    return {"features_created": int(created_feature)}
 
 
 async def _seed_features(session: AsyncSession, rows: list[dict]) -> None:
@@ -854,6 +1014,9 @@ async def seed_auth_data(session: AsyncSession, settings: Settings) -> None:
     await grant_super_admin_financial_report_permissions(session)
     await normalize_financial_sidebar_order(session)
     await seed_visitor_features_and_permissions(session)
+    await seed_staff_feature_and_permissions(session)
+    await seed_staff_attendance_report_feature_and_permissions(session)
+    await seed_violations_feature_and_permissions(session)
     await _seed_subscription_plans(session, snapshot.get("subscription_plans", []))
     await _seed_associations(session, snapshot.get("associations", []))
     await _seed_bank_accounts(session, snapshot.get("bank_accounts", []))
@@ -1359,6 +1522,7 @@ async def seed_visitor_features_and_permissions(session: AsyncSession) -> None:
         feature.is_deleted = False
         features[code] = feature
     await session.flush()
+
 
     for _feature_id, code, _name, _route, parent_code, _icon, _order in definitions:
         features[code].parent_id = features[parent_code].id if parent_code else None
