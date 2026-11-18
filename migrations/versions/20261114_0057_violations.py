@@ -19,6 +19,7 @@ PERMISSIONS = {
     "super_admin": (True, True, True, False),
     "admin": (True, True, True, False),
     "board_member": (True, False, True, False),
+    "committee_member": (True, True, True, False),
     "homeowner": (True, True, True, False),
 }
 
@@ -96,7 +97,7 @@ def upgrade() -> None:
             {"id": VIOLATIONS_FEATURE_ID, "description": "Association violation reporting, review, and resolution."},
         )
         feature_id = VIOLATIONS_FEATURE_ID
-    roles = bind.execute(sa.text("SELECT id, code FROM roles WHERE code IN ('super_admin', 'admin', 'board_member', 'homeowner') AND is_deleted = 0")).mappings()
+    roles = bind.execute(sa.text("SELECT id, code FROM roles WHERE code IN ('super_admin', 'admin', 'board_member', 'committee_member', 'homeowner') AND is_deleted = 0")).mappings()
     for role in roles:
         can_view, can_create, can_update, can_delete = PERMISSIONS[role["code"]]
         existing_id = bind.execute(sa.text("SELECT id FROM role_feature_permissions WHERE role_id = :role_id AND feature_id = :feature_id"), {"role_id": role["id"], "feature_id": feature_id}).scalar()

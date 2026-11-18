@@ -178,11 +178,22 @@ class ViolationService:
             violator_account_id = await self.repository.active_account_id_for_user(violation.violator_user_id)
             if violator_account_id:
                 message = (
-                    "A board-approved violation requires your response."
+                    (
+                        "A violation has been filed against you. Please review it and submit "
+                        "your response."
+                    )
                     if violation.action == ViolationAction.FINE
-                    else "A board-approved violation was waived off; no response is required."
+                    else (
+                        "A violation has been filed against you and was waived off; "
+                        "no response is required."
+                    )
                 )
-                await self.repository.notify(violator_account_id, violation, f"Violation {violation.display_id} approved", message)
+                await self.repository.notify(
+                    violator_account_id,
+                    violation,
+                    "A violation has been filed against you",
+                    message,
+                )
         else:
             await self.repository.notify(violation.reporter_account_id, violation, f"Violation {violation.display_id} rejected", "The board rejected this violation.")
 
@@ -194,7 +205,11 @@ class ViolationService:
             or violation.action != ViolationAction.FINE
         ):
             raise HTTPException(status.HTTP_403_FORBIDDEN, ViolationMessage.FORBIDDEN)
-        if violation.violator_response is not None:
+        is_accepting_after_discussion = (
+            response == "Accept"
+            and violation.violator_response == "Discuss with Board"
+        )
+        if violation.violator_response is not None and not is_accepting_after_discussion:
             raise HTTPException(status.HTTP_409_CONFLICT, ViolationMessage.RESPONSE_ALREADY_RECORDED)
         violation.violator_response = response
         violation.responded_at = datetime.now(UTC)
@@ -202,12 +217,40 @@ class ViolationService:
         await self.repository.notify(violation.reporter_account_id, violation, f"Response to {violation.display_id}", "The reported homeowner submitted a response.")
         await self.repository.notify_many(await self.repository.board_account_ids(violation.association_id), violation, f"Response to {violation.display_id}", "The reported homeowner submitted a response.", account.id)
 
+    async def force_accept(self, violation_id: str, account: Account) -> None:
+        """Resolve a Board discussion as accepted so the configured fine becomes due."""
+        self._require_board(account)
+        violation = await self._authorized_violation(violation_id, account, allow_admin_read=False)
+        if violation.violator_user_id == account.user_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, ViolationMessage.SELF_DECISION_FORBIDDEN)
+        if (
+            violation.status != ViolationStatus.APPROVED
+            or violation.action != ViolationAction.FINE
+            or violation.violator_response != "Discuss with Board"
+        ):
+            raise HTTPException(status.HTTP_409_CONFLICT, ViolationMessage.FORCE_ACCEPT_UNAVAILABLE)
+
+        violation.violator_response = "Accept"
+        violation.responded_at = datetime.now(UTC)
+        await self.repository.session.flush()
+
+        violator_account_id = await self.repository.active_account_id_for_user(violation.violator_user_id)
+        if violator_account_id:
+            await self.repository.notify(
+                violator_account_id,
+                violation,
+                "Violation resolved by the Board",
+                "The Board has finalized this violation. The associated fine is now due.",
+            )
+
     async def messages(self, violation_id: str, account: Account) -> list[dict]:
         await self._authorized_violation(violation_id, account, allow_admin_read=False, require_message_participant=True)
         return await self.repository.messages(violation_id)
 
     async def send_message(self, violation_id: str, payload: ViolationMessageRequest, account: Account) -> ViolationMessageEvent:
         violation = await self._authorized_violation(violation_id, account, allow_admin_read=False, require_message_participant=True)
+        if violation.violator_response != "Discuss with Board":
+            raise HTTPException(status.HTTP_409_CONFLICT, ViolationMessage.DISCUSSION_CLOSED)
         message = ViolationThreadMessage(id=str(uuid.uuid4()), violation_id=violation.id, sender_account_id=account.id, body=payload.body, attachment_url=payload.attachment_url)
         self.repository.add_message(message)
         await self.repository.session.flush()

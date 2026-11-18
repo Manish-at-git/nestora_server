@@ -21,12 +21,29 @@ PERMISSIONS = {
 
 def upgrade() -> None:
     bind = op.get_bind()
+    staff_feature_id = bind.execute(
+        sa.text("SELECT id FROM features WHERE id = :feature_id OR code = 'staff' LIMIT 1"),
+        {"feature_id": STAFF_FEATURE_ID},
+    ).scalar()
+    if staff_feature_id is None:
+        bind.execute(
+            sa.text(
+                "INSERT INTO features (id, code, name, description, icon, route, order_index, is_system, is_active, is_deleted) "
+                "VALUES (:id, 'staff', 'Staff', :description, 'IdCard', '/staff', :sidebar_order, 1, 1, 0)"
+            ),
+            {
+                "id": STAFF_FEATURE_ID,
+                "description": "Association daily-worker directory, permanent QR passes, and attendance.",
+                "sidebar_order": STAFF_SIDEBAR_ORDER,
+            },
+        )
+        staff_feature_id = STAFF_FEATURE_ID
     bind.execute(
         sa.text(
             "UPDATE features SET code = 'staff', name = 'Staff', route = '/staff', icon = 'IdCard', "
             "order_index = :sidebar_order, is_active = 1, is_deleted = 0 WHERE id = :feature_id"
         ),
-        {"feature_id": STAFF_FEATURE_ID, "sidebar_order": STAFF_SIDEBAR_ORDER},
+        {"feature_id": staff_feature_id, "sidebar_order": STAFF_SIDEBAR_ORDER},
     )
 
     roles = bind.execute(
@@ -37,7 +54,7 @@ def upgrade() -> None:
             sa.text(
                 "SELECT id FROM role_feature_permissions WHERE role_id = :role_id AND feature_id = :feature_id"
             ),
-            {"role_id": role["id"], "feature_id": STAFF_FEATURE_ID},
+            {"role_id": role["id"], "feature_id": staff_feature_id},
         ).scalar()
         if role["code"] == "security":
             if permission_id:
@@ -71,7 +88,7 @@ def upgrade() -> None:
                     "(id, role_id, feature_id, can_view, can_create, can_update, can_delete, is_deleted, sidebar_order) "
                     "VALUES (:id, :role_id, :feature_id, :can_view, :can_create, :can_update, :can_delete, 0, :sidebar_order)"
                 ),
-                {**values, "id": str(uuid.uuid4()), "role_id": role["id"], "feature_id": STAFF_FEATURE_ID},
+                {**values, "id": str(uuid.uuid4()), "role_id": role["id"], "feature_id": staff_feature_id},
             )
 
 

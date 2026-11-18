@@ -23,6 +23,24 @@ class SubscriptionExpiryInfo:
     is_expired: bool
 
 
+def resolve_subscription_end(
+    *,
+    subscription_start: date | None,
+    plan_trial_days: int | None,
+    configured_end: date | None,
+) -> date | None:
+    """Use the assigned plan duration when one is configured.
+
+    An association keeps an end date for plans without a duration.  When its
+    current plan has trial days, however, the plan duration is authoritative so
+    plan edits cannot leave the association displaying an obsolete expiry.
+    """
+    days = max(int(plan_trial_days or 0), 0)
+    if subscription_start is not None and days > 0:
+        return subscription_start + timedelta(days=days)
+    return configured_end
+
+
 def calculate_effective_subscription_status(
     *, configured_status: str | None, subscription_end: date | None, today: date
 ) -> str:

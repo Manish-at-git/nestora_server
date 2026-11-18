@@ -283,6 +283,7 @@ async def seed_violations_feature_and_permissions(session: AsyncSession) -> dict
         RoleCode.SUPER_ADMIN: (True, False, True, False),
         RoleCode.ADMIN: (True, True, True, False),
         RoleCode.BOARD_MEMBER: (True, False, True, False),
+        RoleCode.COMMITTEE_MEMBER: (True, True, True, False),
         RoleCode.HOMEOWNER: (True, True, True, False),
     }
     roles = list((await session.scalars(select(Role).where(Role.code.in_(set(matrix)), Role.is_active.is_(True), Role.is_deleted.is_(False)))).all())

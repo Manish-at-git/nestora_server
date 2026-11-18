@@ -43,6 +43,7 @@ from app.modules.subscriptions.trial import (
     calculate_effective_subscription_status,
     calculate_subscription_expiry,
     calculate_trial_info,
+    resolve_subscription_end,
 )
 
 
@@ -577,20 +578,25 @@ class AuthService:
         row = result.mappings().first()
         if row is None:
             return {}
+        subscription_end = resolve_subscription_end(
+            subscription_start=row["subscription_start"],
+            plan_trial_days=row["trial_days"],
+            configured_end=row["subscription_end"],
+        )
         trial = calculate_trial_info(
             trial_days=row["trial_days"],
             subscription_status=row["subscription_status"],
             subscription_start=row["subscription_start"],
-            subscription_end=row["subscription_end"],
+            subscription_end=subscription_end,
             today=date.today(),
         )
         subscription_expiry = calculate_subscription_expiry(
-            subscription_end=row["subscription_end"],
+            subscription_end=subscription_end,
             today=date.today(),
         )
         effective_subscription_status = calculate_effective_subscription_status(
             configured_status=row["subscription_status"],
-            subscription_end=row["subscription_end"],
+            subscription_end=subscription_end,
             today=date.today(),
         )
         assessment = resolve_assessment_amount(

@@ -125,9 +125,9 @@ class ViolationRepository:
     async def board_account_ids(self, association_id: str) -> list[str]:
         values = await self.session.scalars(
             text(
-                "SELECT bm.account_id FROM board_members bm WHERE bm.association_id = :association_id "
-                "AND bm.status = 'active' AND bm.is_deleted = 0 "
-                "AND (bm.term_end_date IS NULL OR bm.term_end_date >= CURRENT_DATE)"
+                "SELECT bm.account_id FROM board_members bm "
+                "WHERE bm.association_id = :association_id "
+                "AND bm.status = 'active' AND bm.is_deleted = 0"
             ),
             {"association_id": association_id},
         )

@@ -243,7 +243,9 @@ def serialize_association(association) -> AssociationResponse:
             association, "effective_subscription_status", association.subscription_status or "Active"
         ),
         subscription_start=association.subscription_start,
-        subscription_end=association.subscription_end,
+        subscription_end=getattr(
+            association, "effective_subscription_end", association.subscription_end
+        ),
         renewal_date=association.renewal_date,
         payment_status=association.payment_status,
         trial_days=getattr(association, "trial_days", 0),

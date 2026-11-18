@@ -86,6 +86,18 @@ async def respond(violation_id: str, payload: ViolatorResponseRequest, context: 
     return success_response({"updated": True}, "Response recorded.")
 
 
+@router.patch("/{violation_id}/force-accept", response_model=ApiResponse[dict])
+async def force_accept(
+    violation_id: str,
+    context: AuthContext = Depends(require_csrf),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    async with UnitOfWork(session):
+        await ViolationService(session).force_accept(violation_id, context.account)
+    await publish_pending_notifications(session)
+    return success_response({"updated": True}, "Violation force accepted by the Board.")
+
+
 @router.get("/{violation_id}/messages", response_model=ApiResponse[list[ViolationMessageResponse]])
 async def messages(violation_id: str, context: AuthContext = Depends(get_auth_context), session: AsyncSession = Depends(get_db_session)) -> dict:
     return success_response([ViolationMessageResponse(**row) for row in await ViolationService(session).messages(violation_id, context.account)])

@@ -30,6 +30,7 @@ from app.modules.subscriptions.trial import (
     calculate_effective_subscription_status,
     calculate_subscription_expiry,
     calculate_trial_info,
+    resolve_subscription_end,
 )
 from app.modules.users.models import UserCode, UserDetail
 
@@ -145,11 +146,19 @@ class AssociationService:
         for association in associations:
             association.unit_count = await self.repository.unit_count(association.id)
             association.allowed_features = await self.repository.allowed_features(association.current_plan_id)
+            subscription_end = resolve_subscription_end(
+                subscription_start=association.subscription_start,
+                plan_trial_days=association.plan.trial_days if association.plan else 0,
+                configured_end=association.subscription_end,
+            )
+            # Keep this derived for the response. Reads must not write database
+            # records merely to correct an older saved end date.
+            association.effective_subscription_end = subscription_end
             trial = calculate_trial_info(
                 trial_days=association.plan.trial_days if association.plan else 0,
                 subscription_status=association.subscription_status,
                 subscription_start=association.subscription_start,
-                subscription_end=association.subscription_end,
+                subscription_end=subscription_end,
                 today=date.today(),
             )
             association.trial_days = trial.trial_days
@@ -158,11 +167,11 @@ class AssociationService:
             association.is_trial_expired = trial.is_trial_expired
             association.effective_subscription_status = calculate_effective_subscription_status(
                 configured_status=association.subscription_status,
-                subscription_end=association.subscription_end,
+                subscription_end=subscription_end,
                 today=date.today(),
             )
             expiry = calculate_subscription_expiry(
-                subscription_end=association.subscription_end,
+                subscription_end=subscription_end,
                 today=date.today(),
             )
             association.subscription_days_left = expiry.days_left
@@ -272,8 +281,12 @@ class AssociationService:
         if plan and ("plan_id" in payload.model_fields_set or "subscription_status" not in payload.model_fields_set):
             start = association.subscription_start or date.today()
             association.subscription_start = start
-            if plan.trial_days > 0 and association.payment_status != "Paid":
-                association.subscription_end = association.subscription_end or (start + timedelta(days=plan.trial_days))
+            if plan.trial_days > 0:
+                association.subscription_end = resolve_subscription_end(
+                    subscription_start=start,
+                    plan_trial_days=plan.trial_days,
+                    configured_end=association.subscription_end,
+                )
             elif association.subscription_status not in {"Inactive", "Cancelled", "Canceled"}:
                 association.subscription_status = "Active"
         await self.repository.session.flush()
