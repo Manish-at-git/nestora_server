@@ -41,7 +41,7 @@ class UnitDocument(Base):
 
     id: Mapped[str] = mapped_column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     association_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("associations.id", ondelete="CASCADE"), index=True)
-    unit_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("units.id", ondelete="CASCADE"), index=True)
+    unit_id: Mapped[str | None] = mapped_column(CHAR(36), index=True)
     user_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("accounts.account_id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     type: Mapped[str] = mapped_column(String(50), nullable=False)

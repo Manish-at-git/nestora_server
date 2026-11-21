@@ -26,10 +26,10 @@ class StaffMember(Base):
     email: Mapped[str | None] = mapped_column(String(150), nullable=True)
     assignment_type: Mapped[str] = mapped_column(String(20), nullable=False, default="common_area", server_default="common_area")
     block_id: Mapped[str | None] = mapped_column(
-        CHAR(36), ForeignKey("blocks.id", ondelete="RESTRICT"), nullable=True, index=True
+        CHAR(36), nullable=True, index=True
     )
     unit_id: Mapped[str | None] = mapped_column(
-        CHAR(36), ForeignKey("units.id", ondelete="RESTRICT"), nullable=True, index=True
+        CHAR(36), nullable=True, index=True
     )
     account_id: Mapped[str | None] = mapped_column(
         CHAR(36), ForeignKey("accounts.account_id", ondelete="SET NULL"), unique=True, nullable=True, index=True
